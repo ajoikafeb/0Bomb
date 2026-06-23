@@ -150,6 +150,18 @@ export const COSMETIC_SLOTS = ["Helmet", "Suit", "Trail", "Bomb Effect", "Aura",
 export const ENERGY_REGEN_INTERVAL = 300000;
 export const ENERGY_REGEN_AMOUNT = 1;
 
+export const ENERGY_COST_BY_DIFFICULTY: Record<Difficulty, number> = {
+  Easy: 5,
+  Advanced: 10,
+  Nightmare: 15,
+};
+
+export const CLEAR_TIME_BONUS_CONFIG = {
+  optimalSeconds: 180,
+  maxBonus: 1.0,
+  falloffPerSecond: 0.002,
+};
+
 export const HERO_HATCH_COST = "25";
 export const LOOT_MINT_COST = "5";
 export const COSMETIC_MINT_COST = "10";
@@ -189,3 +201,12 @@ export const BIOMES = [
 ] as const;
 
 export const UPGRADE_SEEDS = ["Power", "Speed", "Range", "Vital", "Luck", "Intelligence"] as const;
+export type UpgradeSeedType = typeof UPGRADE_SEEDS[number];
+
+export const DROP_RATES = {
+  common: 0.2,
+  rare: 0.03,
+  legendary: 0.0025,
+  upgradeSeed: 0.05,
+  fragment: 0.4,
+};

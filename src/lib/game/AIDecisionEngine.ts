@@ -79,6 +79,11 @@ export interface HeroSim {
   tilesExplored: number;
   damageDealt: number;
   damageTaken: number;
+  // ─── Anti-Idle / Stuck Detection ───────────────────────
+  positionHistory: { x: number; y: number; tick: number }[];
+  lastAction: string;
+  stuckTicks: number;
+  searchTarget: { x: number; y: number } | null;
 }
 
 export interface EnemySim {
@@ -219,6 +224,10 @@ function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
       alive: true,
       bombCooldown: 0,
       moveCooldown: 0,
+      positionHistory: [],
+      lastAction: "spawn",
+      stuckTicks: 0,
+      searchTarget: null,
       power: h.stats.power,
       defense: h.stats.defense,
       speed: h.stats.speed,
@@ -318,6 +327,23 @@ export function tickGame(state: GameState, tickMs: number): GameState {
     hero.moveCooldown = Math.max(0, hero.moveCooldown - effectiveTick + tickMs);
 
     if (hero.moveCooldown > 0) continue;
+
+    // ─── Stuck Detection ──────────────────────────────────
+    hero.positionHistory.push({ x: hero.x, y: hero.y, tick: state.tick });
+    if (hero.positionHistory.length > 10) hero.positionHistory.shift();
+    const recent = hero.positionHistory.filter(p => p.tick > state.tick - 15);
+    const samePos = recent.every(p => p.x === hero.x && p.y === hero.y);
+    if (samePos && recent.length >= 5) {
+      hero.stuckTicks++;
+      if (hero.stuckTicks > 3) {
+        hero.stuckTicks = 0;
+        hero.searchTarget = null;
+        hero.positionHistory = [];
+        state.logs.push(`${hero.name} was stuck — recalculating path`);
+      }
+    } else {
+      hero.stuckTicks = 0;
+    }
 
     const threats = scanThreats(state, hero);
     const opportunities = scanOpportunities(state, hero);

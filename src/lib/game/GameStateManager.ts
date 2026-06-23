@@ -1,5 +1,6 @@
-import type { Hero, Memory, MarketplaceListing, MapProgression } from "@/lib/game/types";
-import { TRAIT_DEFINITIONS, MEMORY_EVENTS, ENERGY_REGEN_INTERVAL, ENERGY_REGEN_AMOUNT, MARKETPLACE_FEE, TREASURY_ADDRESS, CORE_STATS } from "@/lib/game/constants";
+import type { Hero, Memory, MarketplaceListing, MapProgression, RewardChest, RewardChestItem, UpgradeSeed } from "@/lib/game/types";
+import { TRAIT_DEFINITIONS, MEMORY_EVENTS, ENERGY_REGEN_INTERVAL, ENERGY_REGEN_AMOUNT, MARKETPLACE_FEE, TREASURY_ADDRESS, CORE_STATS, DIFFICULTIES, DIFFICULTY_CONFIG, ENERGY_COST_BY_DIFFICULTY, CLEAR_TIME_BONUS_CONFIG, DROP_RATES, UPGRADE_SEEDS } from "@/lib/game/constants";
+import type { Difficulty } from "@/lib/game/constants";
 import type { Equipment } from "@/lib/game/equipmentSystem";
 import { generateEquipment } from "@/lib/game/equipmentSystem";
 import type { Cosmetic } from "@/lib/game/cosmeticSystem";
@@ -899,6 +900,9 @@ export function createNewActiveMap(address: string, difficulty: string, grid: nu
     originalDestructibleCount: countDestructibleTiles(grid as any),
     prePlacedItems: prePlacedItems || [],
     created_at: new Date().toISOString(),
+    startedAt: Date.now(),
+    completedAt: null,
+    autoDeployed: false,
   };
   saveActiveMap(map);
   return map;
@@ -1630,4 +1634,173 @@ export function getGlobalLeaderboard(): LeaderboardEntry[] {
     .sort((a, b) => b.kills - a.kills || b.score - a.score);
 
   return entries.map((e, i) => ({ ...e, rank: i + 1 }));
+}
+
+// ─── Map Logic / Auto Farm / Reward Systems ─────────────────
+
+export function getEnergyCostForDifficulty(difficulty: string): number {
+  const d = difficulty as Difficulty;
+  return ENERGY_COST_BY_DIFFICULTY[d] ?? 10;
+}
+
+export function getAutoFarmEligibleHeroes(address: string): Hero[] {
+  const save = loadSave();
+  const addr = address.toLowerCase();
+  return save.heroes.filter(h =>
+    h.owner_address?.toLowerCase() === addr &&
+    h.auto_deploy &&
+    h.energy >= getEnergyCostForDifficulty("Easy") &&
+    h.is_alive
+  );
+}
+
+export function autoBuildTeam(address: string, difficulty: string, count: number = 5): string[] {
+  const save = loadSave();
+  const addr = address.toLowerCase();
+  const energyCost = getEnergyCostForDifficulty(difficulty);
+
+  const candidates = save.heroes
+    .filter(h =>
+      h.owner_address?.toLowerCase() === addr &&
+      h.auto_deploy &&
+      h.energy >= energyCost &&
+      h.is_alive
+    )
+    .sort((a, b) => {
+      const aScore = a.farming_stats.efficiency * 2 + a.energy + a.stats.intelligence;
+      const bScore = b.farming_stats.efficiency * 2 + b.energy + b.stats.intelligence;
+      return bScore - aScore;
+    });
+
+  return candidates.slice(0, count).map(h => h.id);
+}
+
+export function consumeDeployEnergy(heroId: string, difficulty: string): boolean {
+  const hero = getHero(heroId);
+  if (!hero) return false;
+  const cost = getEnergyCostForDifficulty(difficulty);
+  if (hero.energy < cost) return false;
+  updateHero(heroId, { energy: hero.energy - cost });
+  return true;
+}
+
+export function calculateClearTimeBonus(elapsedSeconds: number): number {
+  const { optimalSeconds, maxBonus, falloffPerSecond } = CLEAR_TIME_BONUS_CONFIG;
+  if (elapsedSeconds <= optimalSeconds) return maxBonus;
+  const penalty = (elapsedSeconds - optimalSeconds) * falloffPerSecond;
+  return Math.max(0, maxBonus - penalty);
+}
+
+export function generateRewardChest(
+  mapId: string,
+  difficulty: string,
+  heroes: Hero[],
+  elapsedSeconds: number,
+  originalDestructibleCount: number,
+  destroyedCount: number,
+  kills: number
+): RewardChest {
+  const diff = difficulty as Difficulty;
+  const dc = DIFFICULTY_CONFIG[diff];
+  const clearTimeBonus = calculateClearTimeBonus(elapsedSeconds);
+  const avgLuck = heroes.length > 0
+    ? heroes.reduce((s, h) => s + h.stats.luck, 0) / heroes.length
+    : 50;
+  const avgTreasureHunter = heroes.length > 0
+    ? heroes.reduce((s, h) => s + h.farming_stats.treasure_hunter, 0) / heroes.length
+    : 10;
+  const luckMod = 1 + avgLuck / 200;
+  const thMod = 1 + avgTreasureHunter / 200;
+  const overallMod = luckMod * thMod * clearTimeBonus * (dc.xpMultiplier || 1);
+
+  const items: RewardChestItem[] = [];
+
+  // Equipment drops
+  const eqChance = DROP_RATES.common * overallMod;
+  if (Math.random() < eqChance) {
+    const eq = generateEquipment(undefined, null);
+    addToInventory(eq);
+    items.push({ type: "equipment", name: eq.name, rarity: eq.rarity, quantity: 1 });
+  }
+
+  // Rare equipment
+  const rareChance = DROP_RATES.rare * overallMod;
+  if (Math.random() < rareChance) {
+    const eq = generateEquipment(undefined, null, "Rare");
+    addToInventory(eq);
+    items.push({ type: "equipment", name: eq.name, rarity: eq.rarity, quantity: 1 });
+  }
+
+  // Legendary equipment
+  const legChance = DROP_RATES.legendary * overallMod;
+  if (Math.random() < legChance) {
+    const eq = generateEquipment(undefined, null, "Legendary");
+    addToInventory(eq);
+    items.push({ type: "equipment", name: eq.name, rarity: eq.rarity, quantity: 1 });
+  }
+
+  // Cosmetic drops
+  const cosChance = dc.cosmeticChance * overallMod;
+  if (Math.random() < cosChance) {
+    const cos = generateCosmetic(undefined, null);
+    addCosmetic(cos);
+    items.push({ type: "cosmetic", name: cos.name, rarity: cos.rarity, quantity: 1 });
+  }
+
+  // Upgrade seeds
+  const seedChance = DROP_RATES.upgradeSeed * overallMod;
+  if (Math.random() < seedChance) {
+    const seedType = UPGRADE_SEEDS[Math.floor(Math.random() * UPGRADE_SEEDS.length)];
+    items.push({ type: "upgrade_seed", name: seedType, quantity: 1 });
+  }
+
+  // Fragment rewards
+  const baseFrags = dc.tokenMin + Math.floor(Math.random() * (dc.tokenMax - dc.tokenMin + 1));
+  const fragBonus = Math.floor(kills * 0.5 * clearTimeBonus);
+  const totalFrags = Math.floor((baseFrags + fragBonus) * overallMod);
+  items.push({ type: "fragment", quantity: totalFrags });
+
+  // XP
+  const baseXP = destroyedCount * 10 + kills * 50;
+  const xp = Math.floor(baseXP * overallMod);
+
+  return {
+    mapId,
+    difficulty: diff,
+    clearTimeSeconds: elapsedSeconds,
+    clearTimeBonus,
+    items,
+    fragments: totalFrags,
+    xp,
+    claimed: false,
+  };
+}
+
+export function claimRewardChest(chest: RewardChest, address: string): boolean {
+  if (chest.claimed) return false;
+  chest.claimed = true;
+  addFragments(address, chest.fragments);
+  return true;
+}
+
+export function autoRedeploy(address: string, difficulty: string, gameStateCreator: (heroes: Hero[], diff?: string) => any): any | null {
+  const team = autoBuildTeam(address, difficulty);
+  if (team.length === 0) return null;
+
+  // Consume energy for each selected hero
+  for (const id of team) {
+    consumeDeployEnergy(id, difficulty);
+  }
+
+  const heroes = team.map(id => getHero(id)).filter(Boolean) as Hero[];
+  if (heroes.length === 0) return null;
+
+  return gameStateCreator(heroes, difficulty);
+}
+
+export function toggleAutoDeploy(heroId: string): boolean {
+  const hero = getHero(heroId);
+  if (!hero) return false;
+  updateHero(heroId, { auto_deploy: !hero.auto_deploy });
+  return true;
 }

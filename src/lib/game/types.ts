@@ -140,6 +140,31 @@ export interface MapState {
   created_at: string;
 }
 
+export interface RewardChest {
+  mapId: string;
+  difficulty: Difficulty;
+  clearTimeSeconds: number;
+  clearTimeBonus: number;
+  items: RewardChestItem[];
+  fragments: number;
+  xp: number;
+  claimed: boolean;
+}
+
+export interface RewardChestItem {
+  type: "equipment" | "cosmetic" | "upgrade_seed" | "fragment" | "potion";
+  name?: string;
+  rarity?: string;
+  quantity: number;
+}
+
+export interface UpgradeSeed {
+  id: string;
+  type: string;
+  rarity: "Common" | "Rare" | "Epic" | "Legendary";
+  owner: string | null;
+}
+
 export interface AdminConfig {
   reward_multiplier: number;
   currency_drop_rate: number;
@@ -167,6 +192,9 @@ export interface MapProgression {
   originalDestructibleCount: number;
   prePlacedItems: { x: number; y: number }[];
   created_at: string;
+  startedAt: number;
+  completedAt: number | null;
+  autoDeployed: boolean;
 }
 
 export interface MarketplaceListing {

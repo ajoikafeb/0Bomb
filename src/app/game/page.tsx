@@ -6,12 +6,12 @@ import { useWalletContext } from "@/components/wallet/WalletProvider";
 import { generateHero } from "@/lib/game/heroGenerator";
 import { generateEquipment } from "@/lib/game/equipmentSystem";
 import { generateCosmetic } from "@/lib/game/cosmeticSystem";
-import { addHero, getHeroes, addMemory, addXP, addIntelligence, updateHero, getHero, calculateScoreRewards, consumeEnergy, triggerEnergyRegen, addEnergyPotions, getEnergyPotions, useEnergyPotion, getActiveMap, clearActiveMap, createNewActiveMap, saveActiveMap, addToInventory, addCosmetic, isEmergencyShutdown, getEffectiveMultipliers, addTransaction, addFragments, getFragments, isAddressFrozen, isAddressBanned, getPlayerBalance, addPlayerBalance, evolveAIStats } from "@/lib/game/GameStateManager";
+import { addHero, getHeroes, addMemory, addXP, addIntelligence, updateHero, getHero, calculateScoreRewards, consumeEnergy, triggerEnergyRegen, addEnergyPotions, getEnergyPotions, useEnergyPotion, getActiveMap, clearActiveMap, createNewActiveMap, saveActiveMap, addToInventory, addCosmetic, isEmergencyShutdown, getEffectiveMultipliers, addTransaction, addFragments, getFragments, isAddressFrozen, isAddressBanned, getPlayerBalance, addPlayerBalance, evolveAIStats, autoBuildTeam, toggleAutoDeploy, getEnergyCostForDifficulty, getAutoFarmEligibleHeroes, generateRewardChest, claimRewardChest, autoRedeploy, consumeDeployEnergy } from "@/lib/game/GameStateManager";
 import { createGameState, tickGame, getGameResult, TileType, calculateMapProgress, type DropMultipliers } from "@/lib/game/AIDecisionEngine";
-import { DIFFICULTIES, DIFFICULTY_CONFIG, MAX_HEROES_PER_MAP, HERO_HATCH_COST } from "@/lib/game/constants";
+import { DIFFICULTIES, DIFFICULTY_CONFIG, MAX_HEROES_PER_MAP, HERO_HATCH_COST, ENERGY_COST_BY_DIFFICULTY, CLEAR_TIME_BONUS_CONFIG } from "@/lib/game/constants";
 import { getTokenBalance, payForHatch } from "@/lib/blockchain/provider";
 import { renderHero, renderEnemy, renderBoss, renderBomb, renderExplosion, renderLoot, renderSolidWall, renderDestructible, renderLava, renderCrystal } from "@/lib/game/sprites";
-import type { Hero, MapProgression } from "@/lib/game/types";
+import type { Hero, MapProgression, RewardChest, RewardChestItem } from "@/lib/game/types";
 import type { GameState, EnemySim } from "@/lib/game/AIDecisionEngine";
 import { playExplosion, playBombPlace, playKill, playLootPickup, playVictory, playDefeat, startMusic, stopMusic, setMusicEnabled, setSfxEnabled, isMusicEnabled, isSfxEnabled } from "@/lib/audio/audioManager";
 import { SpriteEngineer, SpriteScout, SpriteMarine, SpriteScientist, SpriteMedic, SpriteCommander, SpriteMiner } from "@/components/pixel-art/characters";
@@ -27,7 +27,7 @@ const HERO_SPRITES: Record<string, React.FC<{ size?: number; className?: string 
 };
 
 const TICK_INTERVAL = 350;
-const ENERGY_COST = 10;
+const getEnergyCost = (d: string) => ENERGY_COST_BY_DIFFICULTY[d as "Easy" | "Advanced" | "Nightmare"] || 10;
 const CELL = 36;
 const PAD = 2;
 const BATTLE_SAVE_KEY = "0gbomber_active_battle";
@@ -106,6 +106,7 @@ export default function GamePage() {
   const [activeMap, setActiveMap] = useState<MapProgression | null>(null);
   const [mapProgress, setMapProgress] = useState(0);
   const [autoDeploy, setAutoDeploy] = useState(false);
+  const [rewardChest, setRewardChest] = useState<RewardChest | null>(null);
   const [paused, setPaused] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const gameRef = useRef<GameState | null>(null);
@@ -188,7 +189,8 @@ export default function GamePage() {
   const autoDeployNow = () => {
     if (!address || isBattlingRef.current) return;
     const fresh = getHeroes().filter(h => h.owner_address === address);
-    const available = fresh.filter(h => h.energy >= ENERGY_COST).slice(0, MAX_HEROES_PER_MAP);
+    const energyCost = getEnergyCost(difficulty);
+    const available = fresh.filter(h => h.energy >= energyCost).slice(0, MAX_HEROES_PER_MAP);
     if (available.length === 0) return;
     startBattle(available.map(h => h.id));
   };
@@ -399,6 +401,17 @@ export default function GamePage() {
     }
   };
 
+  const handleToggleAutoDeploy = (heroId: string) => {
+    toggleAutoDeploy(heroId);
+    setHeroes(getHeroes().filter(h => h.owner_address === address));
+  };
+
+  const handleAutoBuild = () => {
+    if (!address) return;
+    const team = autoBuildTeam(address, difficulty);
+    setSelectedIds(team);
+  };
+
   // Build grid + enemies for a new battle (from active map or fresh)
   const buildBattleState = (heroes: Hero[], multipliers?: DropMultipliers) => {
     if (activeMap && !activeMap.cleared) {
@@ -495,13 +508,14 @@ export default function GamePage() {
     if (address && isAddressFrozen(address)) { setLogs(prev => ["❄️ Account frozen — cannot battle", ...prev].slice(0, 200)); return; }
     const canDeploy = heroIds.every(id => {
       const h = getHeroes().find(x => x.id === id);
-      return h && h.energy >= ENERGY_COST;
+      const energyCost = getEnergyCost(difficulty);
+      return h && h.energy >= energyCost;
     });
     if (!canDeploy) return;
 
     setSelectedIds(heroIds);
     selectedIdsRef.current = heroIds;
-    for (const id of heroIds) consumeEnergy(id, ENERGY_COST);
+    for (const id of heroIds) consumeEnergy(id, getEnergyCost(difficulty));
     clearSavedBattle();
 
     const selectedHeroes = getHeroes().filter(h => heroIds.includes(h.id));
@@ -649,43 +663,12 @@ export default function GamePage() {
       }
     }
 
-    // Map completion bonus rewards
-    if (address && battleResult.allCleared) {
+    // Map completion bonus rewards (via reward chest)
+    if (address && battleResult.allCleared && rewardChest && !rewardChest.claimed) {
       const mapDiff = (activeMap?.difficulty || difficulty) as "Easy" | "Advanced" | "Nightmare";
-      const dc = DIFFICULTY_CONFIG[mapDiff];
-      const eff = getEffectiveMultipliers();
-
-      const bonusItems = dc.bonusEqMin + Math.floor(Math.random() * (dc.bonusEqMax - dc.bonusEqMin + 1));
-      for (let i = 0; i < bonusItems; i++) {
-        const eq = generateEquipment(undefined, null);
-        addToInventory(eq);
-      }
-      setLogs(prev => [`🎒 Map clear bonus: ${bonusItems} equipment`, ...prev].slice(0, 200));
-
-      if (Math.random() < dc.cosmeticChance * eff.cosmeticDropRate) {
-        const cos = generateCosmetic(undefined, null);
-        addCosmetic(cos);
-        setLogs(prev => [`✨ Bonus cosmetic: ${cos.name} (${cos.rarity})`, ...prev].slice(0, 200));
-      }
-
-      const tokenReward = Math.floor((dc.tokenMin + Math.floor(Math.random() * (dc.tokenMax - dc.tokenMin + 1))) * eff.eventRewardMultiplier);
-      addFragments(address, tokenReward);
-      addTransaction({ type: "income", category: "reward", amount: String(tokenReward), description: `Map clear reward (${mapDiff})`, ownerAddress: address });
-      setLogs(prev => [`💎 Earned ${tokenReward} 0B Fragments from ${mapDiff} map clear`, ...prev].slice(0, 200));
-
-      // Boss kill extra rewards
-      if (battleResult.bossKilled) {
-        const bossEq = generateEquipment(undefined, null);
-        addToInventory(bossEq);
-        setLogs(prev => [`👑 Boss reward: ${bossEq.name} (${bossEq.rarity})`, ...prev].slice(0, 200));
-        const bossCos = generateCosmetic(undefined, null);
-        addCosmetic(bossCos);
-        setLogs(prev => [`👑 Boss cosmetic: ${bossCos.name} (${bossCos.rarity})`, ...prev].slice(0, 200));
-        const bossTokens = Math.floor((dc.bossTokenMin + Math.floor(Math.random() * (dc.bossTokenMax - dc.bossTokenMin + 1))) * eff.eventRewardMultiplier);
-        addFragments(address, bossTokens);
-        addTransaction({ type: "income", category: "reward", amount: String(bossTokens), description: `Boss kill reward (${mapDiff})`, ownerAddress: address });
-        setLogs(prev => [`👑 Earned ${bossTokens} 0B Fragments from boss kill`, ...prev].slice(0, 200));
-      }
+      claimRewardChest(rewardChest, address);
+      setRewardChest({ ...rewardChest, claimed: true });
+      setLogs(prev => [`🎁 Claimed reward chest: ${rewardChest.fragments}💎`, ...prev].slice(0, 200));
     }
 
     clearSavedBattle();
@@ -697,11 +680,33 @@ export default function GamePage() {
       setPotions(getEnergyPotions());
       setFragments(getFragments(address));
     }
-    // Auto-deploy next round if toggle still on
-    if (autoDeployRef.current) {
-      setTimeout(() => autoDeployNow(), 500);
+    // Auto-redeploy next round if toggle still on
+    if (autoDeployRef.current && address) {
+      const eligible = getAutoFarmEligibleHeroes(address);
+      if (eligible.length > 0) {
+        setLogs(prev => [`🔄 Auto-redeploying ${eligible.length} heroes...`, ...prev].slice(0, 200));
+        setTimeout(() => {
+          startBattle(eligible.map(h => h.id));
+        }, 300);
+      }
     }
   };
+
+  // Generate reward chest on map clear, reset when battle ends
+  useEffect(() => {
+    if (battleResult && (battleResult.allCleared || battleResult.bossKilled) && address) {
+      const mapDiff = (activeMap?.difficulty || difficulty) as "Easy" | "Advanced" | "Nightmare";
+      const clearTimeSec = elapsed / 1000;
+      const battleHeroes = heroes.filter(h => battleResult.heroResults.some((r: any) => r.id === h.id));
+      const totalKills = battleResult.heroResults.reduce((s: number, r: any) => s + r.kills, 0);
+      const totalBlocks = battleResult.heroResults.reduce((s: number, r: any) => s + (r.blocksBroken || 0), 0);
+      const origCount = activeMap?.originalDestructibleCount || totalBlocks;
+      const chest = generateRewardChest(activeMap?.id || "default", mapDiff, battleHeroes, clearTimeSec, origCount, totalBlocks, totalKills);
+      setRewardChest(chest);
+    } else if (!battleResult) {
+      setRewardChest(null);
+    }
+  }, [battleResult]);
 
   if (!isConnected) {
     return (
@@ -722,7 +727,7 @@ export default function GamePage() {
 
   const canDeploy = selectedIds.every(id => {
     const h = heroes.find(x => x.id === id);
-    return h && h.energy >= ENERGY_COST;
+    return h && h.energy >= getEnergyCost(difficulty);
   });
 
   return (
@@ -751,7 +756,12 @@ export default function GamePage() {
               className={`px-3 py-1 text-[10px] font-bold rounded ${
                 canDeploy ? "bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white" : "bg-gray-700 text-gray-400 cursor-not-allowed"
               }`}
-            >{activeMap && !activeMap.cleared ? "⚔ Continue " : "⚔ Deploy "}{ENERGY_COST}⚡</button>
+            >{activeMap && !activeMap.cleared ? "⚔ Continue " : "⚔ Deploy "}{getEnergyCost(difficulty)}⚡</button>
+          )}
+          {!isBattling && !battleResult && !hasSavedBattle && (
+            <button onClick={handleAutoBuild}
+              className="px-2 py-1 text-[10px] font-bold rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-600/20"
+            >Auto Team</button>
           )}
           <button onClick={() => {
               const next = !autoDeploy;
@@ -847,6 +857,12 @@ export default function GamePage() {
                         >🧪</button>
                       )}
                     </div>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <button onClick={(e) => { e.stopPropagation(); handleToggleAutoDeploy(hero.id); }}
+                        className={`text-[8px] px-1 py-0.5 rounded border ${hero.auto_deploy ? "bg-green-600/20 border-green-500 text-green-300" : "border-gray-700 text-gray-500"}`}
+                      >{hero.auto_deploy ? "Auto ✓" : "Manual"}</button>
+                      <span className="text-[8px] text-gray-600">{getEnergyCostForDifficulty(difficulty)}⚡/run</span>
+                    </div>
                   </div>
                 ))
               )}
@@ -934,7 +950,7 @@ export default function GamePage() {
               <div className="text-center mb-2">
                 <div className="text-3xl mb-1">{battleResult.bossKilled ? "🔥" : battleResult.allCleared ? "✨" : "💀"}</div>
                 <h2 className="text-base font-bold text-cyan-400">{battleResult.bossKilled ? "Boss Slain!" : battleResult.allCleared ? "Victory!" : "Mission Complete"}</h2>
-                <p className="text-[10px] text-gray-500">{battleResult.ticks} ticks</p>
+                <p className="text-[10px] text-gray-500">{(elapsed / 1000).toFixed(1)}s • {battleResult.ticks} ticks</p>
               </div>
               <div className="grid grid-cols-4 gap-1 mb-2">
                 <div className="bg-black/30 rounded p-1.5 text-center">
@@ -962,9 +978,20 @@ export default function GamePage() {
                   </div>
                 ))}
               </div>
+              {rewardChest && !rewardChest.claimed && (
+                <div className="mb-2 p-2 bg-yellow-600/10 border border-yellow-500/30 rounded">
+                  <div className="text-[10px] font-bold text-yellow-400 mb-1">🎁 Reward Chest</div>
+                  <div className="text-[9px] text-gray-400">
+                    {rewardChest.items.map((item, i) => (
+                      <div key={i}>• {item.quantity}x {item.type}{item.name ? ` (${item.name})` : ""}</div>
+                    ))}
+                    <div>Clear time bonus: +{Math.round(rewardChest.clearTimeBonus * 100)}%</div>
+                  </div>
+                </div>
+              )}
               <button onClick={handleClaimRewards}
                 className="w-full py-1.5 text-[10px] font-bold bg-gradient-to-r from-yellow-600 to-orange-600 rounded hover:from-yellow-500 hover:to-orange-500 text-white"
-              >Claim {battleResult.heroResults.reduce((s: number, r: any) => s + r.potionsFound, 0)}🧪 + XP</button>
+              >{rewardChest && !rewardChest.claimed ? `🎁 Claim ${rewardChest.fragments}💎 + ${battleResult.heroResults.reduce((s: number, r: any) => s + r.potionsFound, 0)}🧪` : `Claim ${battleResult.heroResults.reduce((s: number, r: any) => s + r.potionsFound, 0)}🧪 + XP`}</button>
             </div>
           ) : hasSavedBattle ? (
             <div className="text-center text-gray-500">
@@ -976,13 +1003,13 @@ export default function GamePage() {
             <div className="text-center text-gray-500">
               <div className="text-3xl mb-2">⚔️</div>
               <p className="text-xs mb-1">Select heroes and deploy</p>
-              <p className="text-[10px] text-gray-600">{ENERGY_COST}⚡/hero • 30% 🧪 per kill</p>
+              <p className="text-[10px] text-gray-600">{getEnergyCost(difficulty)}⚡/hero • 30% 🧪 per kill</p>
               {selectedIds.length > 0 && (
             <button onClick={() => startBattle()} disabled={!canDeploy}
                   className={`mt-2 px-4 py-1 text-xs font-bold rounded ${
                     canDeploy ? "bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white" : "bg-gray-700 text-gray-400 cursor-not-allowed"
                   }`}
-                >⚔ Deploy {ENERGY_COST}⚡</button>
+                >⚔ Deploy {getEnergyCost(difficulty)}⚡</button>
               )}
             </div>
           )}
