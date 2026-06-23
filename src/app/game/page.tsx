@@ -6,7 +6,7 @@ import { useWalletContext } from "@/components/wallet/WalletProvider";
 import { generateHero } from "@/lib/game/heroGenerator";
 import { generateEquipment } from "@/lib/game/equipmentSystem";
 import { generateCosmetic } from "@/lib/game/cosmeticSystem";
-import { addHero, getHeroes, addMemory, addXP, addIntelligence, updateHero, getHero, calculateScoreRewards, consumeEnergy, triggerEnergyRegen, addEnergyPotions, getEnergyPotions, useEnergyPotion, getActiveMap, clearActiveMap, createNewActiveMap, saveActiveMap, addToInventory, addCosmetic, isEmergencyShutdown, getEffectiveMultipliers, addTransaction, addFragments, getFragments, isAddressFrozen, isAddressBanned, getPlayerBalance, addPlayerBalance } from "@/lib/game/GameStateManager";
+import { addHero, getHeroes, addMemory, addXP, addIntelligence, updateHero, getHero, calculateScoreRewards, consumeEnergy, triggerEnergyRegen, addEnergyPotions, getEnergyPotions, useEnergyPotion, getActiveMap, clearActiveMap, createNewActiveMap, saveActiveMap, addToInventory, addCosmetic, isEmergencyShutdown, getEffectiveMultipliers, addTransaction, addFragments, getFragments, isAddressFrozen, isAddressBanned, getPlayerBalance, addPlayerBalance, evolveAIStats } from "@/lib/game/GameStateManager";
 import { createGameState, tickGame, getGameResult, TileType, calculateMapProgress, type DropMultipliers } from "@/lib/game/AIDecisionEngine";
 import { DIFFICULTIES, DIFFICULTY_CONFIG, MAX_HEROES_PER_MAP, HERO_HATCH_COST } from "@/lib/game/constants";
 import { getTokenBalance, payForHatch } from "@/lib/blockchain/provider";
@@ -614,6 +614,11 @@ export default function GamePage() {
         addTransaction({ type: "income", category: "reward", amount: String(heroTokenReward), description: `${result.kills} kills, ${result.blocksBroken} blocks`, ownerAddress: address });
       }
 
+      // AI evolution based on battle performance
+      const battleScore = result.kills * 50 + result.blocksBroken * 10 + result.tilesExplored * 5;
+      const killRatio = result.kills / Math.max(1, (battleResult.heroResults.reduce((s: number, r: any) => s + r.kills, 0)));
+      evolveAIStats(result.id, battleResult.ticks, result.survived, killRatio);
+
       if (result.kills > 0) {
         addMemory(result.id, "Killed Alien", `Killed ${result.kills} aliens`);
         addIntelligence(result.id, "Combat", 1);
@@ -1014,14 +1019,14 @@ export default function GamePage() {
           </div>
 
           {gameState && isBattling && (
-            <div className="h-[260px] shrink-0 border-b border-gray-800">
+            <div className="h-[300px] shrink-0 border-b border-gray-800">
               <div className="text-[10px] font-bold text-cyan-400 px-2 py-1 border-b border-gray-800">⚔ Hero Status</div>
               <div className="px-2 py-1 space-y-0.5 h-[calc(100%-24px)] overflow-y-auto">
                 {gameState.heroes.filter(h => h.alive).length === 0 ? (
                   <p className="text-[11px] text-red-400 text-center pt-1">All heroes defeated</p>
                 ) : (
                   gameState.heroes.map(h => {
-                    const hpPct = h.hp / 5;
+                    const hpPct = Math.max(0, h.hp / Math.max(1, h.maxHp));
                     return (
                       <div key={h.id} className={`rounded border text-[9px] ${h.alive ? "border-gray-700 bg-black/30" : "border-red-900/30 bg-red-900/10"}`}>
                         <div className="flex items-center justify-between px-1.5 py-0.5">
@@ -1033,16 +1038,36 @@ export default function GamePage() {
                             <span className="text-white font-bold text-[10px] truncate max-w-[50px]">{h.name}</span>
                             <span className="text-gray-500 text-[8px]">{h.class}</span>
                           </div>
-                          <span className={h.alive ? "text-green-400" : "text-red-400"}>{h.alive ? `♥${h.hp}` : "💀"}</span>
+                          <span className={h.alive ? "text-green-400" : "text-red-400"}>{h.alive ? `♥${h.hp}/${h.maxHp}` : "💀"}</span>
                         </div>
                         <div className="px-1.5 pb-0.5">
-                          <div className="h-1 bg-gray-700 rounded overflow-hidden">
+                          <div className="h-1 bg-gray-700 rounded overflow-hidden mb-0.5">
                             <div className={`h-full rounded ${hpPct > 0.5 ? "bg-green-500" : hpPct > 0.25 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${hpPct * 100}%` }} />
                           </div>
-                          <div className="flex items-center justify-between text-[8px] text-gray-500">
+                          <div className="flex items-center gap-2 text-[8px] text-gray-500">
+                            <span className={h.alive ? "text-red-400" : ""}>P:{h.power}</span>
+                            <span className="text-blue-400">D:{h.defense}</span>
+                            <span className="text-green-400">S:{h.speed}</span>
+                            <span className="text-purple-400">I:{h.intelligence}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[8px] text-gray-500">
                             <span>💀{h.kills}</span>
                             <span>🧱{h.blocksBroken}</span>
                             <span>🎒{h.lootCollected}</span>
+                            <span>⚔{h.damageDealt}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[7px] text-gray-600">
+                            <span>Bra:{h.brave}</span>
+                            <span>Grd:{h.greedy}</span>
+                            <span>Cu:{h.curious}</span>
+                            <span>Agg:{h.aggression}</span>
+                            <span>Risk:{h.risk_awareness}</span>
+                          </div>
+                          <div className="flex items-center gap-1 text-[7px]">
+                            <div className="flex-1 h-0.5 bg-gray-700 rounded overflow-hidden max-w-[40px]">
+                              <div className="h-full bg-yellow-500 rounded" style={{ width: `${(h.energy / h.max_energy) * 100}%` }} />
+                            </div>
+                            <span className="text-yellow-400">{h.energy}</span>
                           </div>
                         </div>
                       </div>

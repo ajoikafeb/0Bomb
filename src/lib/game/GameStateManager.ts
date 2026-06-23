@@ -1,5 +1,5 @@
 import type { Hero, Memory, MarketplaceListing, MapProgression } from "@/lib/game/types";
-import { TRAITS, MEMORY_EVENTS, INTELLIGENCE_TYPES, ENERGY_REGEN_INTERVAL, ENERGY_REGEN_AMOUNT, MARKETPLACE_FEE, TREASURY_ADDRESS } from "@/lib/game/constants";
+import { TRAIT_DEFINITIONS, MEMORY_EVENTS, ENERGY_REGEN_INTERVAL, ENERGY_REGEN_AMOUNT, MARKETPLACE_FEE, TREASURY_ADDRESS, CORE_STATS } from "@/lib/game/constants";
 import type { Equipment } from "@/lib/game/equipmentSystem";
 import { generateEquipment } from "@/lib/game/equipmentSystem";
 import type { Cosmetic } from "@/lib/game/cosmeticSystem";
@@ -164,7 +164,7 @@ function loadSave(): GameSave {
       if (save.energyPotions && Object.keys(save.potionCounts).length === 0) {
         save.potionCounts["_legacy"] = save.energyPotions;
       }
-      // Migrate old heroes missing equipment/cosmetics/badges/lastEnergyRegen/auto_deploy
+      // Migrate old heroes to new stat system
       for (const hero of save.heroes) {
         if (!hero.equipment) hero.equipment = {};
         if (!hero.cosmetics) hero.cosmetics = {};
@@ -172,9 +172,49 @@ function loadSave(): GameSave {
         if (!hero.lastEnergyRegen) hero.lastEnergyRegen = Date.now();
         if (!hero.traits) hero.traits = [];
         if (!hero.memories) hero.memories = [];
-        if (!hero.personality) hero.personality = {};
-        if (!hero.intelligence) hero.intelligence = {};
         if (hero.auto_deploy === undefined) hero.auto_deploy = false;
+        if (!hero.legacy_cores) (hero as any).legacy_cores = [];
+        // Convert old intelligence/personality records to new typed system
+        if (!hero.stats) {
+          const oldIntel = (hero as any).intelligence || {};
+          const oldPers = (hero as any).personality || {};
+          hero.stats = {
+            power: oldIntel.combat || 30,
+            defense: Math.floor((oldPers.careful || 50) / 2),
+            speed: oldIntel.pathfinding || 30,
+            intelligence: oldIntel.resource_optimization || 30,
+            luck: oldIntel.loot || 30,
+            vitality: 50,
+          };
+          hero.ai_stats = {
+            learning_rate: oldIntel.resource_optimization || 30,
+            adaptability: oldPers.chaotic || 50,
+            risk_awareness: oldIntel.hazard_recognition || 30,
+            exploration: oldPers.curious || 50,
+            aggression: oldPers.aggressive || 50,
+          };
+          hero.farming_stats = {
+            mining: 20,
+            scavenging: oldIntel.loot || 20,
+            treasure_hunter: 10,
+            efficiency: 20,
+          };
+          hero.genetics = {
+            dna_quality: 50,
+            potential: 70,
+            mutation_chance: 15,
+            legacy_affinity: 30,
+          };
+          hero.personality = {
+            brave: oldPers.aggressive || 50,
+            greedy: oldPers.greedy || 50,
+            curious: oldPers.curious || 50,
+            loyal: oldPers.social || 50,
+            lazy: Math.floor(Math.random() * 50),
+            tactical: oldIntel.combat || 50,
+          };
+          if (!hero.bloodline) (hero as any).bloodline = null;
+        }
       }
       applyEnergyRegen(save.heroes);
       return save;
@@ -238,7 +278,11 @@ export function addXP(heroId: string, amount: number): number {
   const hero = getHero(heroId);
   if (!hero) return 0;
 
-  const newXP = (hero.xp || 0) + amount;
+  // Apply Learning Rate modifier: +0.5% per point over 50, -0.5% per point under
+  const lrMod = 1 + (hero.ai_stats.learning_rate - 50) / 100;
+  const modifiedAmount = Math.max(1, Math.round(amount * lrMod));
+
+  const newXP = (hero.xp || 0) + modifiedAmount;
   const xpForNextLevel = hero.level * 100;
   let newLevel = hero.level;
   let remainingXP = newXP;
@@ -256,16 +300,91 @@ export function addXP(heroId: string, amount: number): number {
   return newLevel > hero.level ? newLevel : 0;
 }
 
-export function addIntelligence(heroId: string, type: string, amount: number = 1) {
+export function evolveAIStats(heroId: string, tickCount: number, survived: boolean, efficiency: number) {
   const hero = getHero(heroId);
   if (!hero) return;
 
-  const intel = { ...hero.intelligence };
-  const key = type.toLowerCase().replace(/\s+/g, "_");
-  if (intel[key] !== undefined) {
-    intel[key] = Math.min(100, (intel[key] || 0) + amount);
-    updateHero(heroId, { intelligence: intel });
+  // AI stats slowly evolve based on experience
+  // Each stat has a chance to increase based on learning_rate and tick count
+  const learnChance = hero.ai_stats.learning_rate / 100; // 0-1
+  const xpScale = Math.min(1, tickCount / 500); // more ticks = more evolution
+
+  const newAI = { ...hero.ai_stats };
+
+  if (Math.random() < learnChance * xpScale * 0.3) {
+    newAI.learning_rate = Math.min(100, newAI.learning_rate + 1);
   }
+  if (Math.random() < learnChance * xpScale * 0.2) {
+    newAI.adaptability = Math.min(100, newAI.adaptability + 1);
+  }
+  if (survived && Math.random() < learnChance * xpScale * 0.15) {
+    newAI.risk_awareness = Math.min(100, newAI.risk_awareness + 1);
+  }
+  if (efficiency > 0.7 && Math.random() < learnChance * xpScale * 0.15) {
+    newAI.exploration = Math.min(100, newAI.exploration + 1);
+  }
+
+  updateHero(heroId, { ai_stats: newAI });
+}
+
+export function addIntelligence(heroId: string, _type: string, amount: number = 1) {
+  const hero = getHero(heroId);
+  if (!hero) return;
+  // Legacy compat — boost stats instead
+  const newStats = { ...hero.stats };
+  const boosted = ["power", "defense", "speed", "intelligence", "luck"];
+  const key = boosted[Math.floor(Math.random() * boosted.length)] as keyof typeof newStats;
+  newStats[key] = Math.min(100, newStats[key] + Math.floor(amount / 2));
+  updateHero(heroId, { stats: newStats });
+}
+
+export function addStat(heroId: string, stat: string, amount: number = 1) {
+  const hero = getHero(heroId);
+  if (!hero) return;
+  const newStats: Record<string, number> = { ...hero.stats };
+  if (stat in newStats) {
+    newStats[stat] = Math.min(100, newStats[stat] + amount);
+  }
+  updateHero(heroId, { stats: newStats as unknown as Hero["stats"] });
+}
+
+export function addAIStat(heroId: string, stat: string, amount: number = 1) {
+  const hero = getHero(heroId);
+  if (!hero) return;
+  const newAI = { ...hero.ai_stats };
+  if (stat in newAI) {
+    (newAI as Record<string, number>)[stat] = Math.min(100, (newAI as Record<string, number>)[stat] + amount);
+    updateHero(heroId, { ai_stats: newAI });
+  }
+}
+
+export function addFarmingStat(heroId: string, stat: string, amount: number = 1) {
+  const hero = getHero(heroId);
+  if (!hero) return;
+  const newFarm = { ...hero.farming_stats };
+  if (stat in newFarm) {
+    (newFarm as Record<string, number>)[stat] = Math.min(100, (newFarm as Record<string, number>)[stat] + amount);
+    updateHero(heroId, { farming_stats: newFarm });
+  }
+}
+
+export function getEffectiveStats(hero: Hero): Record<string, number> {
+  const combined: Record<string, number> = {};
+  for (const [k, v] of Object.entries(hero.stats)) combined[k] = v;
+  for (const [k, v] of Object.entries(hero.ai_stats)) combined[k] = v;
+  for (const [k, v] of Object.entries(hero.farming_stats)) combined[k] = v;
+  // Apply trait bonuses
+  for (const traitName of hero.traits) {
+    const def = TRAIT_DEFINITIONS[traitName];
+    if (def) {
+      for (const [k, bonus] of Object.entries(def.bonus)) {
+        combined[k] = (combined[k] || 0) + bonus;
+      }
+    }
+  }
+  // Apply equipment bonuses
+  // (equipment stat mapping happens in the battle system)
+  return combined;
 }
 
 function checkTraits(heroId: string) {
@@ -276,11 +395,11 @@ function checkTraits(heroId: string) {
   const currentTraits = hero.traits || [];
   const newTraits: string[] = [];
 
-  // Count memory events
   const killedCount = memories.filter(m => m.event === "Killed Alien").length;
   const lootCount = memories.filter(m => m.event === "Found Rare Loot").length;
   const lavaCount = memories.filter(m => m.event === "Touched Lava").length;
   const clearCount = memories.filter(m => m.event === "Perfect Clear").length;
+  const bossKillCount = memories.filter(m => m.event === "Boss Kill").length;
 
   if (hero.level >= 5 && lavaCount >= 1 && !currentTraits.includes("Lava Survivor")) {
     newTraits.push("Lava Survivor");
@@ -300,6 +419,18 @@ function checkTraits(heroId: string) {
   if (clearCount >= 1 && !currentTraits.includes("Explorer")) {
     newTraits.push("Explorer");
   }
+  if (lootCount >= 5 && hero.stats.luck >= 40 && !currentTraits.includes("Loot Goblin")) {
+    newTraits.push("Loot Goblin");
+  }
+  if (hero.level >= 8 && hero.stats.speed >= 50 && !currentTraits.includes("Speed Demon")) {
+    newTraits.push("Speed Demon");
+  }
+  if (hero.level >= 12 && hero.stats.vitality >= 60 && !currentTraits.includes("Iron Will")) {
+    newTraits.push("Iron Will");
+  }
+  if (bossKillCount >= 3 && !currentTraits.includes("Tactical Genius")) {
+    newTraits.push("Tactical Genius");
+  }
 
   if (newTraits.length > 0) {
     updateHero(heroId, { traits: [...currentTraits, ...newTraits] });
@@ -309,11 +440,11 @@ function checkTraits(heroId: string) {
 export function canBecomeLegendary(heroId: string): boolean {
   const hero = getHero(heroId);
   if (!hero) return false;
-  if (hero.level < 10) return false; // Using 10 for demo, would be 100 in production
+  if (hero.level < 10) return false;
 
-  const intel = hero.intelligence;
-  const allMax = Object.values(intel).every(v => v >= 90);
-  if (!allMax) return false;
+  const stats = hero.stats;
+  const allHigh = Object.values(stats).every(v => v >= 70);
+  if (!allHigh) return false;
 
   return !hero.is_legendary;
 }
@@ -333,10 +464,20 @@ export function createLegacy(heroId: string): { success: boolean; newHero?: Hero
     generation: hero.generation + 1,
     legacy_tier: null,
     is_legendary: false,
+    stats: Object.fromEntries(
+      Object.entries(hero.stats).map(([k, v]) => [k, Math.max(10, Math.floor(v * 0.3))])
+    ) as unknown as Hero["stats"],
+    ai_stats: Object.fromEntries(
+      Object.entries(hero.ai_stats).map(([k, v]) => [k, Math.max(10, Math.floor(v * 0.3))])
+    ) as unknown as Hero["ai_stats"],
+    farming_stats: Object.fromEntries(
+      Object.entries(hero.farming_stats).map(([k, v]) => [k, Math.max(10, Math.floor(v * 0.3))])
+    ) as unknown as Hero["farming_stats"],
+    genetics: { ...hero.genetics },
+    personality: Object.fromEntries(
+      Object.entries(hero.personality).map(([k, v]) => [k, v + Math.floor(Math.random() * 10 - 5)])
+    ) as unknown as Hero["personality"],
     traits: hero.traits.slice(0, 2),
-    intelligence: Object.fromEntries(
-      Object.entries(hero.intelligence).map(([k, v]) => [k, Math.max(10, Math.floor(v * 0.3))])
-    ),
     memories: [],
     cosmetics: {
       Helmet: null,
@@ -346,6 +487,15 @@ export function createLegacy(heroId: string): { success: boolean; newHero?: Hero
       Aura: null,
       Drone: null,
     },
+    bloodline: {
+      parent_id: hero.id,
+      parent_name: hero.name,
+      generation: hero.generation,
+      inherited_stats: {},
+      inherited_traits: hero.traits.slice(0, 2),
+      dna_similarity: Math.floor(Math.random() * 40 + 40),
+    },
+    legacy_cores: [],
     lastEnergyRegen: Date.now(),
     created_at: new Date().toISOString(),
   };
@@ -359,12 +509,13 @@ export function createLegacy(heroId: string): { success: boolean; newHero?: Hero
   return { success: true, newHero };
 }
 
-export function calculateScoreRewards(score: number, heroLevel: number): { xp: number; spout: number } {
+export function calculateScoreRewards(score: number, heroLevel: number, hero?: Hero): { xp: number; spout: number } {
   const cfg = getAdminConfig();
   const baseXP = score * cfg.rewardMultiplier * cfg.eventRewardMultiplier;
   const spout = Math.floor(score / 2 * cfg.rewardMultiplier * cfg.eventRewardMultiplier);
   const levelBonus = 1 + heroLevel * 0.1;
-  return { xp: Math.floor(baseXP * levelBonus), spout };
+  const statBonus = hero ? 1 + (hero.farming_stats.efficiency / 200) : 1;
+  return { xp: Math.floor(baseXP * levelBonus * statBonus), spout: Math.floor(spout * statBonus) };
 }
 
 export function renameHero(id: string, newName: string) {

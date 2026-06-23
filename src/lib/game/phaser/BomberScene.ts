@@ -21,6 +21,7 @@ interface Bomb {
   y: number;
   timer: number;
   range: number;
+  damage: number;
 }
 
 interface EnemyData {
@@ -60,6 +61,7 @@ export class BomberScene extends Phaser.Scene {
   private lavaSprites: Phaser.GameObjects.Rectangle[] = [];
   private crystalSprites: Phaser.GameObjects.Rectangle[] = [];
   private destructibleSprites: Phaser.GameObjects.Rectangle[] = [];
+  private statText!: Phaser.GameObjects.Text;
 
   constructor(hero: Hero, onUpdate: (data: any) => void) {
     super({ key: "BomberScene" });
@@ -74,7 +76,12 @@ export class BomberScene extends Phaser.Scene {
     this.generateMap();
     this.drawMap();
 
-    // Player
+    // Player — stats from hero
+    const baseHp = 3 + Math.floor(this.hero.stats.vitality / 20);
+    this.bombRange = 2 + Math.floor(this.hero.stats.intelligence / 25);
+    this.moveSpeed = 100 + this.hero.stats.speed * 1.5;
+    const bombDamage = 1 + Math.floor(this.hero.stats.power / 20);
+
     this.player = this.add.rectangle(TILE * 1.5, TILE * 1.5, TILE - 4, TILE - 4, this.getHeroColor());
     this.playerName = this.add.text(TILE * 1.5, TILE * 1.5 - 14, this.hero.name, {
       fontSize: "8px",
@@ -95,12 +102,22 @@ export class BomberScene extends Phaser.Scene {
     // Enemies
     this.spawnEnemies();
 
-    // HUD
-    this.add.text(4, H + 4, `Score: 0  |  Bombs: ${this.maxBombs}  |  Range: ${this.bombRange}`, {
-      fontSize: "10px",
+    // Stats HUD
+    this.statText = this.add.text(4, H + 4, "", {
+      fontSize: "9px",
       color: "#666",
       fontFamily: "monospace",
     });
+
+    this.updateStatText();
+  }
+
+  private updateStatText() {
+    const hp = 3 + Math.floor(this.hero.stats.vitality / 20);
+    this.statText.setText(
+      `Score: ${this.score}  |  HP: ${hp}  |  Bombs: ${this.maxBombs}  |  Range: ${this.bombRange}  |  DMG: ${1 + Math.floor(this.hero.stats.power / 20)}  |  SPD: ${Math.round(this.moveSpeed)}` +
+      `\nP:${this.hero.stats.power} D:${this.hero.stats.defense} S:${this.hero.stats.speed} I:${this.hero.stats.intelligence} L:${this.hero.stats.luck} V:${this.hero.stats.vitality}`
+    );
   }
 
   private getHeroColor(): number {
@@ -248,7 +265,6 @@ export class BomberScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     if (this.isGameOver) return;
 
-    // Player movement
     let dx = 0, dy = 0;
     if (this.cursors.left.isDown || this.wasd.A.isDown) dx = -1;
     else if (this.cursors.right.isDown || this.wasd.D.isDown) dx = 1;
@@ -259,21 +275,14 @@ export class BomberScene extends Phaser.Scene {
       this.tryMove(dx, dy, delta);
     }
 
-    // Place bomb
     if (Phaser.Input.Keyboard.JustDown(this.spaceKey)) {
       this.placeBomb();
     }
 
-    // Update bombs
     this.updateBombs(delta);
-
-    // Update enemies
     this.updateEnemies(delta);
-
-    // Check lava
     this.checkLava();
 
-    // Update UI
     this.onUpdate({ score: this.score, isGameOver: this.isGameOver });
   }
 
@@ -287,7 +296,6 @@ export class BomberScene extends Phaser.Scene {
     if (this.grid[ny][nx] === TileType.SolidWall || this.grid[ny][nx] === TileType.Destructible) return;
     if (this.isBombAt(nx, ny)) return;
 
-    // Check enemy collision
     for (const enemy of this.enemies) {
       if (enemy.x === nx && enemy.y === ny) {
         this.gameOver();
@@ -319,12 +327,15 @@ export class BomberScene extends Phaser.Scene {
       yoyo: true,
     });
 
+    const bombDamage = 1 + Math.floor(this.hero.stats.power / 20);
+
     this.bombs.push({
       sprite: bomb,
       x: cx,
       y: cy,
       timer: 3000,
       range: this.bombRange,
+      damage: bombDamage,
     });
 
     this.activeBombs++;
@@ -363,13 +374,12 @@ export class BomberScene extends Phaser.Scene {
         if (this.grid[ey][ex] === TileType.Destructible) {
           this.grid[ey][ex] = TileType.Empty;
           this.destroyDestructible(ex, ey);
-          this.score += 10;
+          this.score += Math.floor(10 * (1 + this.hero.stats.power / 100));
           this.blocksDestroyed++;
           this.onUpdate({ score: this.score });
           break;
         }
 
-        // Show explosion
         const exp = this.add.rectangle(
           ex * TILE + TILE / 2,
           ey * TILE + TILE / 2,
@@ -385,11 +395,10 @@ export class BomberScene extends Phaser.Scene {
           exp.destroy();
         });
 
-        // Kill enemies in explosion
         for (let ei = this.enemies.length - 1; ei >= 0; ei--) {
           const enemy = this.enemies[ei];
           if (enemy.x === ex && enemy.y === ey) {
-            enemy.hp--;
+            enemy.hp -= bomb.damage;
             if (enemy.hp <= 0) {
               enemy.sprite.destroy();
               this.enemies.splice(ei, 1);
@@ -400,11 +409,16 @@ export class BomberScene extends Phaser.Scene {
           }
         }
 
-        // Kill player if in explosion
         const px = Math.floor(this.player.x / TILE);
         const py = Math.floor(this.player.y / TILE);
         if (px === ex && py === ey) {
-          this.gameOver();
+          // Reduced self-damage based on defense
+          const defReduction = Math.floor(this.hero.stats.defense / 20);
+          const selfDmg = Math.max(1, bomb.damage - defReduction);
+          const hp = 3 + Math.floor(this.hero.stats.vitality / 20);
+          if (selfDmg >= hp) {
+            this.gameOver();
+          }
         }
       }
     }
@@ -418,7 +432,6 @@ export class BomberScene extends Phaser.Scene {
       this.destructibleSprites[idx].destroy();
       this.destructibleSprites.splice(idx, 1);
 
-      // Chance to drop power-up
       const r = Math.random();
       if (r < 0.15) {
         this.add.text(x * TILE + TILE / 2, y * TILE + TILE / 2, "B", {
@@ -459,11 +472,15 @@ export class BomberScene extends Phaser.Scene {
           enemy.sprite.y = ny * TILE + TILE / 2;
         }
 
-        // Check collision with player
         const px = Math.floor(this.player.x / TILE);
         const py = Math.floor(this.player.y / TILE);
         if (enemy.x === px && enemy.y === py) {
-          this.gameOver();
+          const defReduction = Math.floor(this.hero.stats.defense / 20);
+          const dmg = Math.max(1, 1 - defReduction);
+          const hp = 3 + Math.floor(this.hero.stats.vitality / 20);
+          if (dmg >= hp) {
+            this.gameOver();
+          }
         }
       }
     }

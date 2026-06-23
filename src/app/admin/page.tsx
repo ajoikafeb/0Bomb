@@ -607,15 +607,15 @@ export default function AdminPage() {
               <h3 className="text-sm font-bold text-cyan-400 mb-4">🧠 AI Intelligence Center</h3>
               <div className="text-[10px] text-gray-400 space-y-1">
                 <p>Heroes learn from combat, loot collection, and survival.</p>
-                <p>Intelligence types: Combat, Survival, Loot, Hazard Recognition, Pathfinding, Resource Optimization.</p>
-                <p>6 traits can be unlocked through gameplay.</p>
+                <p>Core stats: Power, Defense, Speed, Intelligence, Luck, Vitality. AI, Farming, and Genetic stats also tracked.</p>
+                <p>Traits evolve from memories and unlock through gameplay.</p>
               </div>
               <div className="mt-3 grid grid-cols-2 md:grid-cols-3 gap-2">
-                {["Combat", "Survival", "Loot", "Pathfinding", "Hazard", "Resource"].map(t => {
-                  const total = getHeroes().reduce((s, h) => s + (h.intelligence?.[t] || 0), 0);
+                {["power", "defense", "speed", "intelligence", "luck", "vitality"].map(s => {
+                  const total = getHeroes().reduce((sum, h) => sum + (h.stats?.[s as keyof typeof h.stats] || 0), 0);
                   return (
-                    <div key={t} className="bg-black/30 rounded p-2">
-                      <div className="text-[9px] text-gray-500">{t}</div>
+                    <div key={s} className="bg-black/30 rounded p-2">
+                      <div className="text-[9px] text-gray-500 capitalize">{s}</div>
                       <div className="text-xs font-bold text-cyan-400">{total}</div>
                     </div>
                   );

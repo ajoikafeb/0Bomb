@@ -1,5 +1,6 @@
 import type { Hero, Memory } from "@/lib/game/types";
 import { BATTLE_DROPS } from "@/lib/game/dropRates";
+import { CORE_STATS, AI_STATS, FARMING_STATS } from "@/lib/game/constants";
 
 const TILE = 32;
 const COLS = 21;
@@ -24,6 +25,7 @@ export interface GameState {
   tick: number;
   logs: string[];
   multipliers?: DropMultipliers;
+  difficulty?: "Easy" | "Advanced" | "Nightmare";
 }
 
 export interface HeroSim {
@@ -34,15 +36,49 @@ export interface HeroSim {
   class: string;
   rarity: string;
   hp: number;
+  maxHp: number;
   alive: boolean;
   bombCooldown: number;
-  personality: Record<string, number>;
-  intelligence: Record<string, number>;
+  moveCooldown: number;
+  // ─── Energy ────────────────────────────────────────────
+  energy: number;
+  max_energy: number;
+  // ─── Stats ──────────────────────────────────────────────
+  power: number;              // bomb damage, alien damage, destruction speed
+  defense: number;            // damage reduction, survival rate
+  speed: number;              // movement, loot/bomb placement/escape speed
+  intelligence: number;       // AI decision, pathfinding, farming efficiency, hazard avoidance
+  luck: number;               // equipment drops, rare loot, event rewards
+  vitality: number;           // HP, energy pool, stamina recovery
+  // ─── AI Stats ──────────────────────────────────────────
+  learning_rate: number;
+  adaptability: number;
+  risk_awareness: number;
+  exploration: number;
+  aggression: number;
+  // ─── Farming Stats ─────────────────────────────────────
+  mining: number;
+  scavenging: number;
+  treasure_hunter: number;
+  efficiency: number;
+  // ─── Personality ───────────────────────────────────────
+  brave: number;
+  greedy: number;
+  curious: number;
+  loyal: number;
+  lazy: number;
+  tactical: number;
+  // ─── Traits ────────────────────────────────────────────
+  traits: string[];
+  // ─── Tracked ───────────────────────────────────────────
   memories: Memory[];
   kills: number;
   blocksBroken: number;
   lootCollected: number;
   potionsFound: number;
+  tilesExplored: number;
+  damageDealt: number;
+  damageTaken: number;
 }
 
 export interface EnemySim {
@@ -61,6 +97,7 @@ interface BombSim {
   timer: number;
   range: number;
   ownerId: string;
+  damage: number;
 }
 
 interface LootSim {
@@ -69,18 +106,18 @@ interface LootSim {
   type: "power" | "range" | "hp";
 }
 
-const ENEMY_TYPES = {
-  Crawler: { hp: 1, speed: 500, color: 0x4a0404, xp: 20 },
-  Spitter: { hp: 1, speed: 600, color: 0x2d5a27, xp: 25 },
-  Burrower: { hp: 2, speed: 700, color: 0x5c4033, xp: 30 },
-  Hunter: { hp: 3, speed: 350, color: 0x1a1a4a, xp: 50 },
-  "Hive Guard": { hp: 4, speed: 400, color: 0x6a0dad, xp: 70 },
-  "Void Beast": { hp: 5, speed: 450, color: 0x2d006e, xp: 90 },
-  Titan: { hp: 6, speed: 500, color: 0x8b4513, xp: 110 },
-  "Lava Titan": { hp: 12, speed: 600, color: 0xff2200, xp: 500 },
-  "Hive Queen": { hp: 10, speed: 650, color: 0x9b30ff, xp: 450 },
-  "Ancient Guardian": { hp: 15, speed: 700, color: 0x00ffaa, xp: 600 },
-  "Void Dragon": { hp: 20, speed: 550, color: 0x4400ff, xp: 800 },
+const ENEMY_TYPES: Record<string, { hp: number; speed: number; color: number; xp: number; damage: number }> = {
+  Crawler: { hp: 1, speed: 500, color: 0x4a0404, xp: 20, damage: 1 },
+  Spitter: { hp: 1, speed: 600, color: 0x2d5a27, xp: 25, damage: 1 },
+  Burrower: { hp: 2, speed: 700, color: 0x5c4033, xp: 30, damage: 1 },
+  Hunter: { hp: 3, speed: 350, color: 0x1a1a4a, xp: 50, damage: 2 },
+  "Hive Guard": { hp: 4, speed: 400, color: 0x6a0dad, xp: 70, damage: 2 },
+  "Void Beast": { hp: 5, speed: 450, color: 0x2d006e, xp: 90, damage: 2 },
+  Titan: { hp: 6, speed: 500, color: 0x8b4513, xp: 110, damage: 3 },
+  "Lava Titan": { hp: 12, speed: 600, color: 0xff2200, xp: 500, damage: 4 },
+  "Hive Queen": { hp: 10, speed: 650, color: 0x9b30ff, xp: 450, damage: 3 },
+  "Ancient Guardian": { hp: 15, speed: 700, color: 0x00ffaa, xp: 600, damage: 4 },
+  "Void Dragon": { hp: 20, speed: 550, color: 0x4400ff, xp: 800, damage: 5 },
 };
 
 export function createGameState(
@@ -98,7 +135,6 @@ export function createGameState(
   const enemies = generateEnemies(grid, dc.enemyMin, dc.enemyMax, dc.enemyHpBonus);
   const heroSims = spawnHeroes(heroes, grid);
 
-  // Pre-place random items on empty + destructible cells (3-8 per map, positions vary per run)
   const prePlacedItems: { x: number; y: number }[] = [];
   const itemCandidateCells: { x: number; y: number }[] = [];
   for (let y = 0; y < ROWS; y++) {
@@ -118,7 +154,7 @@ export function createGameState(
   return {
     grid, heroes: heroSims, enemies, bombs: [], loot: [],
     prePlacedItems,
-    tick: 0, logs: [], multipliers,
+    tick: 0, logs: [], multipliers, difficulty,
   };
 }
 
@@ -169,22 +205,50 @@ function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
 
   return heroes.map((h, i) => {
     const cell = i < spawnCells.length ? spawnCells[i] : { x: 1 + Math.floor(Math.random() * 3), y: 1 + Math.floor(Math.random() * 3) };
+    const baseHp = 3 + Math.floor(h.stats.vitality / 20);
     return {
       id: h.id,
       x: cell.x, y: cell.y,
       name: h.name,
       class: h.class,
       rarity: h.rarity,
-      hp: 5,
+      hp: baseHp,
+      maxHp: baseHp,
+      energy: h.energy,
+      max_energy: h.max_energy,
       alive: true,
       bombCooldown: 0,
-      personality: h.personality || {},
-      intelligence: h.intelligence || {},
+      moveCooldown: 0,
+      power: h.stats.power,
+      defense: h.stats.defense,
+      speed: h.stats.speed,
+      intelligence: h.stats.intelligence,
+      luck: h.stats.luck,
+      vitality: h.stats.vitality,
+      learning_rate: h.ai_stats.learning_rate,
+      adaptability: h.ai_stats.adaptability,
+      risk_awareness: h.ai_stats.risk_awareness,
+      exploration: h.ai_stats.exploration,
+      aggression: h.ai_stats.aggression,
+      mining: h.farming_stats.mining,
+      scavenging: h.farming_stats.scavenging,
+      treasure_hunter: h.farming_stats.treasure_hunter,
+      efficiency: h.farming_stats.efficiency,
+      brave: h.personality.brave,
+      greedy: h.personality.greedy,
+      curious: h.personality.curious,
+      loyal: h.personality.loyal,
+      lazy: h.personality.lazy,
+      tactical: h.personality.tactical,
+      traits: h.traits || [],
       memories: h.memories || [],
       kills: 0,
       blocksBroken: 0,
       lootCollected: 0,
       potionsFound: 0,
+      tilesExplored: 0,
+      damageDealt: 0,
+      damageTaken: 0,
     };
   });
 }
@@ -192,15 +256,11 @@ function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
 export function calculateMapProgress(grid: TileType[][], enemies: EnemySim[], originalDestructibleCount: number): number {
   const blocksRemaining = grid.flat().filter(t => t === TileType.Destructible).length;
   const destroyed = Math.max(0, originalDestructibleCount - blocksRemaining);
-
   const totalEnemies = enemies.length;
   const deadEnemies = enemies.filter(e => e.hp <= 0).length;
-
   if (originalDestructibleCount === 0 && totalEnemies === 0) return 100;
-
   const blockProgress = originalDestructibleCount > 0 ? destroyed / originalDestructibleCount : 0;
   const enemyProgress = totalEnemies > 0 ? deadEnemies / totalEnemies : 0;
-
   return Math.round((blockProgress * 0.3 + enemyProgress * 0.7) * 100);
 }
 
@@ -230,27 +290,42 @@ function generateGrid(blockPercent = 1): TileType[][] {
   return grid;
 }
 
-// AI Decision Engine
+// ─── AI Decision Engine ───────────────────────────────────────
+
 export function tickGame(state: GameState, tickMs: number): GameState {
   if (state.heroes.every(h => !h.alive)) return state;
 
   state.tick++;
+
+  // Energy drain — every 10 ticks, drain 1 energy per hero
+  if (state.tick % 10 === 0) {
+    for (const hero of state.heroes) {
+      if (!hero.alive) continue;
+      hero.energy = Math.max(0, hero.energy - 1);
+    }
+  }
 
   // Heroes act
   for (const hero of state.heroes) {
     if (!hero.alive) continue;
 
     hero.bombCooldown = Math.max(0, hero.bombCooldown - tickMs);
+    hero.moveCooldown = Math.max(0, hero.moveCooldown - tickMs);
 
-    // Sense phase: scan surroundings
+    // Movement speed affects how often hero can act
+    const speedFactor = Math.max(0.3, hero.speed / 100);
+    const effectiveTick = tickMs * (0.5 + speedFactor);
+    hero.moveCooldown = Math.max(0, hero.moveCooldown - effectiveTick + tickMs);
+
+    if (hero.moveCooldown > 0) continue;
+
     const threats = scanThreats(state, hero);
     const opportunities = scanOpportunities(state, hero);
-
-    // Decide action
     const action = decideAction(hero, threats, opportunities, state);
-
-    // Execute
     executeAction(state, hero, action, tickMs);
+
+    // Reset move cooldown based on speed
+    hero.moveCooldown = Math.floor(300 * (1 - hero.speed / 150));
   }
 
   // Enemies move
@@ -274,14 +349,16 @@ export function tickGame(state: GameState, tickMs: number): GameState {
         enemy.x = nx;
         enemy.y = ny;
       }
-      // Check collision with hero
       for (const hero of state.heroes) {
         if (hero.alive && hero.x === enemy.x && hero.y === enemy.y) {
-          hero.hp--;
-          state.logs.push(`${hero.name} took damage from ${enemy.type}!`);
+          const rawDamage = def.damage || 1;
+          const reduced = Math.max(1, rawDamage - Math.floor(hero.defense / 20));
+          hero.hp -= reduced;
+          hero.damageTaken += reduced;
+          state.logs.push(`${hero.name} took ${reduced} damage from ${enemy.type}! (def: ${hero.defense})`);
           if (hero.hp <= 0) {
             hero.alive = false;
-            state.logs.push(`💀 ${hero.name} has fallen!`);
+            state.logs.push(`${hero.name} has fallen!`);
           }
         }
       }
@@ -303,29 +380,29 @@ export function tickGame(state: GameState, tickMs: number): GameState {
 
 function scanThreats(state: GameState, hero: HeroSim) {
   const threats: string[] = [];
+  const riskAwareness = hero.risk_awareness;
+  const detectRange = 2 + Math.floor(riskAwareness / 25);
 
-  // Nearby enemies
   for (const enemy of state.enemies) {
     if (enemy.hp <= 0) continue;
     const dist = Math.abs(enemy.x - hero.x) + Math.abs(enemy.y - hero.y);
-    if (dist <= 3) threats.push("enemy_nearby");
+    if (dist <= detectRange) threats.push("enemy_nearby");
     if (dist <= 1) threats.push("enemy_adjacent");
   }
 
-  // Bombs about to explode
   for (const bomb of state.bombs) {
     const dist = Math.abs(bomb.x - hero.x) + Math.abs(bomb.y - hero.y);
-    if (dist <= bomb.range && bomb.timer < 1500) {
+    const escapeTime = Math.max(500, 2000 - hero.speed * 10);
+    if (dist <= bomb.range && bomb.timer < escapeTime) {
       threats.push("bomb_imminent");
     }
   }
 
-  // Adjacent lava
   for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
     const nx = hero.x + dx;
     const ny = hero.y + dy;
     if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && state.grid[ny][nx] === TileType.Lava) {
-      threats.push("lava_adjacent");
+      if (riskAwareness > 20) threats.push("lava_adjacent");
     }
   }
 
@@ -334,24 +411,20 @@ function scanThreats(state: GameState, hero: HeroSim) {
 
 function scanOpportunities(state: GameState, hero: HeroSim) {
   const ops: string[] = [];
-  const baseRange = 2;
-  const intBonus = Math.floor((hero.intelligence?.combat || 20) / 20);
-  const bombRange = Math.min(baseRange + intBonus, 5);
+  const int = hero.intelligence;
+  const bombRange = getEffectiveBombRange(hero);
 
-  // Enemies in bomb range (use actual bomb range)
   for (const enemy of state.enemies) {
     if (enemy.hp <= 0) continue;
     const dist = Math.abs(enemy.x - hero.x) + Math.abs(enemy.y - hero.y);
     if (dist <= bombRange) ops.push("enemy_bombable");
   }
 
-  // Loot nearby
   for (const loot of state.loot) {
     const dist = Math.abs(loot.x - hero.x) + Math.abs(loot.y - hero.y);
-    if (dist <= 2) ops.push("loot_nearby");
+    if (dist <= 2 + Math.floor(hero.speed / 30)) ops.push("loot_nearby");
   }
 
-  // Destructible in cardinal directions only (bomb blast is 4-dir)
   for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
     const nx = hero.x + dx;
     const ny = hero.y + dy;
@@ -361,11 +434,31 @@ function scanOpportunities(state: GameState, hero: HeroSim) {
     }
   }
 
+  // Unexplored tiles nearby
+  const exploreRange = 2 + Math.floor(hero.exploration / 20);
+  for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+    const nx = hero.x + dx * exploreRange;
+    const ny = hero.y + dy * exploreRange;
+    if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && state.grid[ny][nx] === TileType.Destructible) {
+      ops.push("unexplored_nearby");
+      break;
+    }
+  }
+
   return ops;
 }
 
-// BFS: can hero reach a cell outside the bomb's blast radius within 3 steps?
+function getEffectiveBombRange(hero: HeroSim): number {
+  return 2 + Math.floor(hero.intelligence / 25);
+}
+
+function getBombDamage(hero: HeroSim): number {
+  return 1 + Math.floor(hero.power / 20);
+}
+
 function canEscapeBlast(state: GameState, hero: HeroSim, bombRange: number): boolean {
+  const speedBonus = Math.floor(hero.speed / 20);
+  const escapeDist = 1 + speedBonus;
   const blastCells = new Set<string>();
   const dirs = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
   for (const [ddx, ddy] of dirs) {
@@ -384,7 +477,7 @@ function canEscapeBlast(state: GameState, hero: HeroSim, bombRange: number): boo
   while (queue.length > 0) {
     const [cx, cy, dist] = queue.shift()!;
     if (dist > 0 && !blastCells.has(`${cx},${cy}`)) return true;
-    if (dist >= 3) continue;
+    if (dist >= escapeDist) continue;
     for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
       const nx = cx + dx, ny = cy + dy, nk = `${nx},${ny}`;
       if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS || visited.has(nk)) continue;
@@ -399,7 +492,6 @@ function canEscapeBlast(state: GameState, hero: HeroSim, bombRange: number): boo
   return false;
 }
 
-// Would a bomb at hero position hit any enemy or destructible block?
 function wouldBombHitTarget(state: GameState, hero: HeroSim, bombRange: number): boolean {
   const dirs = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
   for (const [ddx, ddy] of dirs) {
@@ -414,61 +506,223 @@ function wouldBombHitTarget(state: GameState, hero: HeroSim, bombRange: number):
   return false;
 }
 
-function decideAction(hero: HeroSim, threats: string[], opportunities: string[], state: GameState): string {
-  const agg = hero.personality?.aggressive || 50;
-  const careful = hero.personality?.careful || 50;
-  const greedy = hero.personality?.greedy || 50;
-  const curious = hero.personality?.curious || 50;
-  const chaotic = hero.personality?.chaotic || 50;
-
-  // Check memories for modified behavior
-  const killedCount = hero.memories.filter(m => m.event === "Killed Alien").length;
-  const lavaCount = hero.memories.filter(m => m.event === "Touched Lava").length;
-
-  const baseRange = 2;
-  const intBonus = Math.floor((hero.intelligence?.combat || 20) / 20);
-  const bombRange = Math.min(baseRange + intBonus, 5);
-
-  // Helper: only bomb if hero can escape AND it would hit something
-  const shouldBomb = () => {
-    if (hero.bombCooldown > 0) return false;
-    if (!canEscapeBlast(state, hero, bombRange)) return false;
-    if (!wouldBombHitTarget(state, hero, bombRange)) return false;
-    return true;
+function calculateTeamCenter(state: GameState): { x: number; y: number } {
+  const alive = state.heroes.filter(h => h.alive);
+  if (alive.length === 0) return { x: 0, y: 0 };
+  return {
+    x: alive.reduce((s, h) => s + h.x, 0) / alive.length,
+    y: alive.reduce((s, h) => s + h.y, 0) / alive.length,
   };
+}
 
-  // Threat response (highest priority)
-  if (threats.includes("bomb_imminent")) return "evade";
-  if (threats.includes("enemy_adjacent")) {
-    if (shouldBomb()) return "bomb";
-    if (agg > 50 && hero.bombCooldown <= 0) return "bomb";
-    if (careful > 60) return "evade";
-    if (hero.bombCooldown <= 0) return "bomb";
-    return "evade";
-  }
-  if (threats.includes("lava_adjacent")) {
-    if (lavaCount > 0 && careful > 30) return "avoid_lava";
-    if (careful > 50) return "avoid_lava";
-  }
+type ActionKey = "bomb" | "collect_loot" | "explore" | "evade" | "avoid_lava" | "idle" | "wander";
 
-  // Opportunity response — bomb nearby enemies
-  if (opportunities.includes("enemy_bombable")) {
-    if (shouldBomb()) {
-      if ((agg + chaotic) > 60 || Math.random() < 0.7) return "bomb";
-    } else if (hero.bombCooldown <= 0 && agg > 65) {
-      return "bomb"; // Aggressive heroes bomb even without safe escape
+function scoreAction(hero: HeroSim, action: ActionKey, threats: string[], opportunities: string[], state: GameState): number {
+  const int = hero.intelligence;
+  const intMod = (int - 50) / 50; // -1 to +1
+  const diff = state.difficulty || "Easy";
+
+  // Difficulty adjustments
+  const diffAggMod = diff === "Easy" ? 10 : diff === "Nightmare" ? -5 : 0;
+  const diffRiskMod = diff === "Easy" ? -10 : diff === "Nightmare" ? 15 : 0;
+  const diffIntMod = diff === "Nightmare" ? 0.3 : diff === "Advanced" ? 0.1 : 0;
+
+  // Memory counts for modifiers
+  const lavaMemCount = hero.memories.filter(m => m.event === "Touched Lava" || m.event === "Survived Lava").length;
+  const nearDeathCount = hero.memories.filter(m => m.event === "Near Death Escape").length;
+  const killedCount = hero.memories.filter(m => m.event === "Killed Alien").length;
+  const bossKillCount = hero.memories.filter(m => m.event === "Boss Kill").length;
+  const trapDeathCount = hero.memories.filter(m => m.event === "Died To Trap").length;
+
+  // Team center for loyalty-based scoring
+  const teamCenter = calculateTeamCenter(state);
+  const distToTeam = Math.abs(hero.x - teamCenter.x) + Math.abs(hero.y - teamCenter.y);
+
+  const bombRange = getEffectiveBombRange(hero);
+  const canBomb = hero.bombCooldown <= 0 && wouldBombHitTarget(state, hero, bombRange);
+  const canEscape = canEscapeBlast(state, hero, bombRange);
+
+  let score = 0;
+
+  switch (action) {
+    case "bomb": {
+      score = 50;
+      // Intelligence: smarter heroes bomb more effectively
+      score += intMod * 15 + (int > 60 ? 10 : int < 30 ? -10 : 0);
+      // Personality
+      score += hero.brave * 0.3 + diffAggMod;
+      score += hero.aggression * 0.2 + diffAggMod * 0.5;
+      score -= hero.lazy * 0.25;
+      score -= hero.risk_awareness * 0.15 + diffRiskMod * 0.1;
+      // Tactical bonus
+      score += hero.tactical * 0.1;
+      // Traits
+      if (hero.traits.includes("Bomb Expert")) score += 25;
+      if (hero.traits.includes("Bomb Master")) score += 15;
+      if (hero.traits.includes("Alien Slayer")) score += 10;
+      // Memory — killed by trap makes cautious about close-range bombs
+      score -= trapDeathCount * 8;
+      // Near-death experience reduces bombing recklessness
+      score -= nearDeathCount * 5;
+      // Opportunities / threats
+      if (opportunities.includes("enemy_bombable")) score += 25;
+      if (opportunities.includes("wall_nearby")) score += 15;
+      if (threats.includes("enemy_adjacent")) score += 30;
+      if (killedCount > 3) score += 10; // confident from past kills
+      if (bossKillCount > 0) score += 15; // boss killers are bold
+      // Cannot bomb checks
+      if (hero.bombCooldown > 0) score -= 999;
+      if (!canBomb) score -= 80;
+      if (!canEscape && hero.risk_awareness > 40) score -= 50;
+      if (!canEscape && nearDeathCount > 2) score -= 40;
+      break;
+    }
+
+    case "collect_loot": {
+      score = 40;
+      score += intMod * 5;
+      score += hero.greedy * 0.4;
+      score += hero.curious * 0.1;
+      score -= hero.lazy * 0.1;
+      // Traits
+      if (hero.traits.includes("Loot Goblin")) score += 25;
+      if (hero.traits.includes("Treasure Hunter")) score += 15;
+      if (hero.traits.includes("Speed Demon")) score += 5;
+      // Memory — past rare loot makes hero prioritize loot
+      const rareLootMemories = hero.memories.filter(m => m.event === "Found Rare Loot" || m.event === "Found Legendary Item").length;
+      score += rareLootMemories * 8;
+      // Only if loot is nearby
+      if (!opportunities.includes("loot_nearby")) score -= 40;
+      // Danger reduces loot priority
+      if (threats.includes("enemy_adjacent")) score -= hero.risk_awareness * 0.3;
+      if (threats.includes("lava_adjacent")) score -= hero.risk_awareness * 0.2;
+      break;
+    }
+
+    case "explore": {
+      score = 30 + (100 - hero.intelligence) * 0.1; // low int explores more randomly
+      score += intMod * 5;
+      score += hero.curious * 0.35;
+      score += hero.exploration * 0.2;
+      score -= hero.lazy * 0.2;
+      score += hero.brave * 0.05;
+      // Traits
+      if (hero.traits.includes("Explorer")) score += 25;
+      if (hero.traits.includes("Speed Demon")) score += 10;
+      // Unexplored nearby
+      if (opportunities.includes("unexplored_nearby")) score += 20;
+      // Danger reduces exploration
+      if (threats.includes("enemy_adjacent") && hero.brave < 40) score -= 25;
+      if (threats.includes("lava_adjacent") && lavaMemCount > 0) score -= 20;
+      break;
+    }
+
+    case "evade": {
+      score = 20;
+      score += intMod * 15; // smarter = better at evading
+      score += hero.risk_awareness * 0.3 + diffRiskMod * 0.3;
+      score += hero.lazy * 0.1;
+      score -= hero.brave * 0.3;
+      score -= hero.aggression * 0.25;
+      // Traits
+      if (hero.traits.includes("Survivor")) score += 25;
+      // Memory — near death makes more cautious
+      score += nearDeathCount * 12;
+      score += trapDeathCount * 10;
+      // Only relevant when threats exist
+      if (threats.includes("enemy_adjacent") || threats.includes("bomb_imminent")) {
+        score += 40;
+      } else {
+        score -= 30; // no point evading with no threat
+      }
+      break;
+    }
+
+    case "avoid_lava": {
+      score = 10;
+      score += hero.risk_awareness * 0.35 + diffRiskMod * 0.3;
+      score += intMod * 10;
+      score += hero.tactical * 0.1;
+      // Memory — lava trauma
+      score += lavaMemCount * 18;
+      score += trapDeathCount * 5;
+      // Traits
+      if (hero.traits.includes("Lava Survivor")) score += 10;
+      if (hero.traits.includes("Survivor")) score += 10;
+      // Only when lava adjacent
+      if (threats.includes("lava_adjacent")) {
+        score += 35;
+      } else {
+        score -= 40;
+      }
+      break;
+    }
+
+    case "idle": {
+      score = 5;
+      score += hero.lazy * 0.4;
+      score += (100 - hero.aggression) * 0.05;
+      score += (100 - hero.brave) * 0.05;
+      // Energy: low energy → prefer idle (especially for smart heroes)
+      const energyPct = hero.energy / hero.max_energy;
+      if (energyPct < 0.2) {
+        score += 25 + intMod * 10; // smart heroes conserve when low on energy
+      } else if (energyPct < 0.4) {
+        score += 10 + intMod * 5;
+      }
+      // Nothing to do
+      if (opportunities.length === 0 && threats.length === 0 && Math.random() < 0.3) score += 15;
+      break;
+    }
+
+    case "wander": {
+      score = 20;
+      score += (100 - hero.intelligence) * 0.15; // low int wanders more
+      score += hero.curious * 0.1;
+      score -= hero.lazy * 0.25;
+      score += hero.exploration * 0.05;
+      if (opportunities.includes("unexplored_nearby")) score += 5;
+      // Danger — brave heroes wander into danger, careful ones don't
+      if (threats.includes("enemy_adjacent")) score += hero.brave * 0.1;
+      if (threats.includes("enemy_adjacent")) score -= hero.risk_awareness * 0.15;
+      break;
     }
   }
 
-  if (opportunities.includes("loot_nearby") && greedy > 40) return "collect_loot";
-
-  if (opportunities.includes("wall_nearby") && shouldBomb()) {
-    if (curious > 40 || Math.random() < 0.4) return "bomb";
+  // ─── Team loyalty modifier ────────────────────────────────
+  if (hero.loyal > 60) {
+    if (distToTeam > 4) score -= hero.loyal * 0.15;
+    if (distToTeam > 7) score -= hero.loyal * 0.2;
+    // Bonus for sticking with team when exploring
+    if (action === "explore" && distToTeam < 3) score += hero.loyal * 0.1;
+  } else if (hero.loyal < 30) {
+    // Lone wolves explore more
+    if (action === "explore") score += (30 - hero.loyal) * 0.3;
   }
 
-  // Default: explore
-  if (chaotic > 70) return "wander";
-  return "explore";
+  // ─── Intelligence boost for all actions on harder difficulties ─
+  score += int * diffIntMod * (action === "bomb" || action === "evade" ? 1.5 : 1);
+
+  // ─── Random noise for variety (5%) ─────────────────────────
+  score += (Math.random() - 0.5) * score * 0.1;
+
+  return Math.max(-999, Math.round(score));
+}
+
+function decideAction(hero: HeroSim, threats: string[], opportunities: string[], state: GameState): string {
+  const actions: ActionKey[] = ["bomb", "collect_loot", "explore", "evade", "avoid_lava", "idle", "wander"];
+  let bestAction: ActionKey = "explore";
+  let bestScore = -Infinity;
+
+  for (const action of actions) {
+    const s = scoreAction(hero, action, threats, opportunities, state);
+    if (s > bestScore) {
+      bestScore = s;
+      bestAction = action;
+    }
+  }
+
+  return bestAction;
 }
 
 function executeAction(state: GameState, hero: HeroSim, action: string, _tickMs: number) {
@@ -477,7 +731,6 @@ function executeAction(state: GameState, hero: HeroSim, action: string, _tickMs:
       placeBomb(state, hero);
       break;
     case "evade": {
-      // Move away from nearest threat — try all 4 dirs
       const liveEnemies = state.enemies.filter(e => e.hp > 0);
       const avgX = liveEnemies.length > 0 ? liveEnemies.reduce((s, e) => s + e.x, 0) / liveEnemies.length : hero.x;
       const avgY = liveEnemies.length > 0 ? liveEnemies.reduce((s, e) => s + e.y, 0) / liveEnemies.length : hero.y;
@@ -492,19 +745,17 @@ function executeAction(state: GameState, hero: HeroSim, action: string, _tickMs:
       break;
     }
     case "avoid_lava": {
-      // Move away from lava
       for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
         const nx = hero.x + dx;
         const ny = hero.y + dy;
         if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && state.grid[ny][nx] === TileType.Empty) {
-          tryMoveHero(state, hero, dx, dy);
-          return;
+          if (tryMoveHero(state, hero, dx, dy)) return;
         }
       }
       break;
     }
     case "collect_loot": {
-      const loot = state.loot.find(l => Math.abs(l.x - hero.x) + Math.abs(l.y - hero.y) <= 2);
+      const loot = state.loot.find(l => Math.abs(l.x - hero.x) + Math.abs(l.y - hero.y) <= 2 + Math.floor(hero.speed / 30));
       if (loot) {
         const dx = Math.sign(loot.x - hero.x);
         const dy = Math.sign(loot.y - hero.y);
@@ -513,12 +764,11 @@ function executeAction(state: GameState, hero: HeroSim, action: string, _tickMs:
         } else if (dx !== 0) tryMoveHero(state, hero, dx, 0);
         else if (dy !== 0) tryMoveHero(state, hero, 0, dy);
         else {
-          // Pick up loot
           state.loot = state.loot.filter(l => l !== loot);
           hero.lootCollected++;
-          if (loot.type === "power") hero.bombCooldown = -500;
-          else if (loot.type === "range") hero.bombCooldown = -500;
-          state.logs.push(`📦 ${hero.name} collected ${loot.type} upgrade!`);
+          if (loot.type === "power") hero.power = Math.min(100, hero.power + 2);
+          else if (loot.type === "range") hero.intelligence = Math.min(100, hero.intelligence + 2);
+          state.logs.push(`${hero.name} collected ${loot.type} upgrade!`);
         }
       }
       break;
@@ -526,10 +776,16 @@ function executeAction(state: GameState, hero: HeroSim, action: string, _tickMs:
     case "explore": {
       const dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]];
       const shuffled = dirs.sort(() => Math.random() - 0.5);
-      for (const [dx, dy] of shuffled) {
-        if (tryMoveHero(state, hero, dx, dy)) return;
+      // Higher curiosity = more directional changes
+      if (hero.curious > 50) {
+        shuffled.sort(() => Math.random() - 0.5);
       }
-      // Stuck — try bombing adjacent wall to open path
+      for (const [dx, dy] of shuffled) {
+        if (tryMoveHero(state, hero, dx, dy)) {
+          hero.tilesExplored++;
+          return;
+        }
+      }
       if (hero.bombCooldown <= 0) placeBomb(state, hero);
       break;
     }
@@ -539,8 +795,12 @@ function executeAction(state: GameState, hero: HeroSim, action: string, _tickMs:
       for (const [dx, dy] of shuffled) {
         if (tryMoveHero(state, hero, dx, dy)) return;
       }
-      // Stuck — try bombing
       if (hero.bombCooldown <= 0) placeBomb(state, hero);
+      break;
+    }
+    case "idle": {
+      // Lazy heroes conserve energy by doing nothing
+      if (hero.bombCooldown <= 0 && Math.random() < 0.3) placeBomb(state, hero);
       break;
     }
   }
@@ -554,13 +814,14 @@ function tryMoveHero(state: GameState, hero: HeroSim, dx: number, dy: number): b
   if (state.bombs.some(b => b.x === nx && b.y === ny)) return false;
   if (state.enemies.some(e => e.hp > 0 && e.x === nx && e.y === ny)) return false;
 
-  // Check lava
   if (state.grid[ny][nx] === TileType.Lava) {
-    hero.hp -= 2;
-    state.logs.push(`🌋 ${hero.name} stepped on lava!`);
+    const lavaDmg = Math.max(1, 2 - Math.floor(hero.defense / 25));
+    hero.hp -= lavaDmg;
+    hero.damageTaken += lavaDmg;
+    state.logs.push(`${hero.name} stepped on lava! (${lavaDmg} dmg)`);
     if (hero.hp <= 0) {
       hero.alive = false;
-      state.logs.push(`💀 ${hero.name} died to lava!`);
+      state.logs.push(`${hero.name} died to lava!`);
     }
     return false;
   }
@@ -568,20 +829,18 @@ function tryMoveHero(state: GameState, hero: HeroSim, dx: number, dy: number): b
   hero.x = nx;
   hero.y = ny;
 
-  // Check if standing on loot
   const loot = state.loot.find(l => l.x === nx && l.y === ny);
   if (loot) {
     state.loot = state.loot.filter(l => l !== loot);
     hero.lootCollected++;
-    state.logs.push(`📦 ${hero.name} picked up ${loot.type}!`);
+    state.logs.push(`${hero.name} picked up ${loot.type}!`);
   }
 
-  // Check if standing on pre-placed item
   const itemIdx = (state.prePlacedItems || []).findIndex(p => p.x === nx && p.y === ny);
   if (itemIdx !== -1) {
     state.prePlacedItems!.splice(itemIdx, 1);
     hero.lootCollected++;
-    state.logs.push(`🎁 ${hero.name} found hidden treasure!`);
+    state.logs.push(`${hero.name} found hidden treasure!`);
   }
 
   return true;
@@ -591,26 +850,28 @@ function placeBomb(state: GameState, hero: HeroSim) {
   if (hero.bombCooldown > 0) return;
   if (state.bombs.some(b => b.x === hero.x && b.y === hero.y)) return;
 
-  const baseRange = 2;
-  const intBonus = Math.floor((hero.intelligence?.combat || 20) / 20);
-  const range = baseRange + intBonus;
+  const range = getEffectiveBombRange(hero);
+  const damage = getBombDamage(hero);
+  const placeSpeed = Math.max(200, 1500 - hero.speed * 10);
 
   state.bombs.push({
     x: hero.x,
     y: hero.y,
-    timer: 2000,
-    range: Math.min(range, 5),
+    timer: Math.max(1000, 2000 - hero.speed * 5),
+    range,
     ownerId: hero.id,
+    damage,
   });
 
-  hero.bombCooldown = 1500;
-  state.logs.push(`💣 ${hero.name} placed a bomb (range: ${range})`);
+  hero.bombCooldown = placeSpeed;
+  state.logs.push(`${hero.name} placed a bomb (range:${range} dmg:${damage})`);
 }
 
 function explodeBomb(state: GameState, bomb: BombSim, multipliers?: DropMultipliers) {
   const dirs = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
   const equipRate = multipliers?.equipmentDropRate ?? 1;
   const currencyRate = multipliers?.currencyDropRate ?? 1;
+  const owner = state.heroes.find(h => h.id === bomb.ownerId);
 
   for (const [ddx, ddy] of dirs) {
     for (let r = 0; r <= bomb.range; r++) {
@@ -621,19 +882,16 @@ function explodeBomb(state: GameState, bomb: BombSim, multipliers?: DropMultipli
 
       if (state.grid[ey][ex] === TileType.Destructible) {
         state.grid[ey][ex] = TileType.Empty;
-        const owner = state.heroes.find(h => h.id === bomb.ownerId);
         if (owner) {
           owner.blocksBroken++;
-          // Check if this block had a pre-placed item
           const hiddenItemIdx = (state.prePlacedItems || []).findIndex(p => p.x === ex && p.y === ey);
           if (hiddenItemIdx !== -1) {
             state.prePlacedItems!.splice(hiddenItemIdx, 1);
             owner.lootCollected++;
-            state.logs.push(`🎁 ${owner.name} found hidden treasure!`);
+            state.logs.push(`${owner.name} found hidden treasure!`);
           }
         }
-        state.logs.push(`🧱 Block destroyed!`);
-        // Drop loot chance
+        state.logs.push(`Block destroyed!`);
         if (Math.random() < BATTLE_DROPS.powerUpFromBlock * equipRate) {
           state.loot.push({
             x: ex, y: ey,
@@ -643,32 +901,34 @@ function explodeBomb(state: GameState, bomb: BombSim, multipliers?: DropMultipli
         break;
       }
 
-      // Damage enemies
+      // Damage enemies - influenced by hero power stat
       for (const enemy of state.enemies) {
         if (enemy.hp > 0 && enemy.x === ex && enemy.y === ey) {
-          enemy.hp--;
+          const dmg = bomb.damage;
+          enemy.hp -= dmg;
+          if (owner) owner.damageDealt += dmg;
           if (enemy.hp <= 0) {
-            const owner = state.heroes.find(h => h.id === bomb.ownerId);
             if (owner) {
               owner.kills++;
-              state.logs.push(`💥 ${owner.name} killed ${enemy.type}!`);
-              // Drop energy potion
+              state.logs.push(`${owner.name} killed ${enemy.type}! (dmg:${dmg})`);
               if (Math.random() < BATTLE_DROPS.potionFromKill * currencyRate) {
                 owner.potionsFound++;
-                state.logs.push(`🧪 ${owner.name} found energy potion!`);
+                state.logs.push(`${owner.name} found energy potion!`);
               }
             }
           }
         }
       }
 
-      // Damage heroes (friendly fire)
+      // Damage heroes - reduced by defense
       for (const hero of state.heroes) {
-        if (hero.alive && hero.x === ex && hero.y === ey) {
-          hero.hp--;
+        if (hero.alive && hero.x === ex && hero.y === ey && hero.id !== bomb.ownerId) {
+          const rawDmg = Math.max(1, bomb.damage - Math.floor(hero.defense / 15));
+          hero.hp -= rawDmg;
+          hero.damageTaken += rawDmg;
           if (hero.hp <= 0) {
             hero.alive = false;
-            state.logs.push(`💀 ${hero.name} was caught in explosion!`);
+            state.logs.push(`${hero.name} was caught in explosion! (dmg:${rawDmg})`);
           }
         }
       }
@@ -680,7 +940,7 @@ export function getGameResult(state: GameState) {
   const totalEnemies = state.enemies.length;
   const deadEnemies = state.enemies.filter(e => e.hp <= 0).length;
   const allCleared = deadEnemies === totalEnemies;
-  const totalScore = state.heroes.reduce((s, h) => s + h.kills * 50 + h.blocksBroken * 10, 0);
+  const totalScore = state.heroes.reduce((s, h) => s + h.kills * 50 + h.blocksBroken * 10 + h.tilesExplored * 5, 0);
 
   const bossTypes = ["Lava Titan", "Hive Queen", "Ancient Guardian", "Void Dragon"];
   const bossKilled = state.enemies.some(e => bossTypes.includes(e.type) && e.hp <= 0);
@@ -696,6 +956,9 @@ export function getGameResult(state: GameState) {
       lootCollected: h.lootCollected,
       potionsFound: h.potionsFound,
       survived: h.alive,
+      damageDealt: h.damageDealt,
+      damageTaken: h.damageTaken,
+      tilesExplored: h.tilesExplored,
     })),
     logs: state.logs,
     ticks: state.tick,

@@ -10,21 +10,92 @@ export const MARKETPLACE_FEE = 0.025;
 export const FRAGMENT_TO_TOKEN = 10;
 export const MIN_CLAIM_TOKENS = 500;
 
-export const HERO_CLASSES = ["Engineer", "Scout", "Marine", "Scientist", "Medic", "Commander", "Miner"] as const;
+// ─── Hero Classes ─────────────────────────────────────────────
+export const HERO_CLASSES = ["Marine", "Scout", "Scientist", "Miner", "Medic", "Commander", "Engineer"] as const;
 export type HeroClass = typeof HERO_CLASSES[number];
 
+export interface ClassConfig {
+  label: string;
+  bonus: Partial<Record<StatName, number>>;
+  description: string;
+}
+
+export const CLASS_CONFIG: Record<HeroClass, ClassConfig> = {
+  Marine: {
+    label: "Marine",
+    bonus: { power: 15, defense: 10 },
+    description: "+Power +Defense -Personality Growth",
+  },
+  Scout: {
+    label: "Scout",
+    bonus: { speed: 15, exploration: 10 },
+    description: "+Speed +Exploration",
+  },
+  Scientist: {
+    label: "Scientist",
+    bonus: { intelligence: 15, learning_rate: 10 },
+    description: "+Intelligence +Learning Rate",
+  },
+  Miner: {
+    label: "Miner",
+    bonus: { mining: 15, efficiency: 10 },
+    description: "+Mining +Efficiency",
+  },
+  Medic: {
+    label: "Medic",
+    bonus: { vitality: 15 },
+    description: "+Vitality +Team Support",
+  },
+  Commander: {
+    label: "Commander",
+    bonus: { learning_rate: 10, adaptability: 10, risk_awareness: 10 },
+    description: "+Leadership +AI Stats",
+  },
+  Engineer: {
+    label: "Engineer",
+    bonus: { scavenging: 10, efficiency: 10 },
+    description: "+Equipment Synergy +Utility",
+  },
+};
+
+// ─── Hero Rarity ──────────────────────────────────────────────
 export const HERO_RARITIES = ["Common", "Rare", "Epic", "Legendary", "Mythic", "Genesis"] as const;
 export type HeroRarity = typeof HERO_RARITIES[number];
 
-export const ENERGY_RANGES: Record<HeroRarity, [number, number]> = {
-  Common: [80, 120],
-  Rare: [100, 150],
-  Epic: [130, 180],
-  Legendary: [160, 220],
-  Mythic: [200, 260],
-  Genesis: [220, 300],
+export interface RarityConfig {
+  totalStatPoints: number;
+  energyRange: [number, number];
+  color: string;
+}
+
+export const RARITY_CONFIG: Record<HeroRarity, RarityConfig> = {
+  Common: { totalStatPoints: 60, energyRange: [80, 120], color: "#9ca3af" },
+  Rare: { totalStatPoints: 90, energyRange: [100, 150], color: "#3b82f6" },
+  Epic: { totalStatPoints: 130, energyRange: [130, 180], color: "#a855f7" },
+  Legendary: { totalStatPoints: 180, energyRange: [160, 220], color: "#f59e0b" },
+  Mythic: { totalStatPoints: 220, energyRange: [200, 260], color: "#ef4444" },
+  Genesis: { totalStatPoints: 250, energyRange: [220, 300], color: "#22d3ee" },
 };
 
+export const ENERGY_RANGES: Record<HeroRarity, [number, number]> = Object.fromEntries(
+  HERO_RARITIES.map(r => [r, RARITY_CONFIG[r].energyRange])
+) as Record<HeroRarity, [number, number]>;
+
+// ─── Stat Names ───────────────────────────────────────────────
+export const CORE_STATS = ["power", "defense", "speed", "intelligence", "luck", "vitality"] as const;
+export const AI_STATS = ["learning_rate", "adaptability", "risk_awareness", "exploration", "aggression"] as const;
+export const FARMING_STATS = ["mining", "scavenging", "treasure_hunter", "efficiency"] as const;
+export const GENETIC_STATS = ["dna_quality", "potential", "mutation_chance", "legacy_affinity"] as const;
+export const PERSONALITY_TRAITS = ["brave", "greedy", "curious", "loyal", "lazy", "tactical"] as const;
+
+export type StatName = typeof CORE_STATS[number] | typeof AI_STATS[number] | typeof FARMING_STATS[number] | typeof GENETIC_STATS[number];
+export type CoreStat = typeof CORE_STATS[number];
+export type AIStat = typeof AI_STATS[number];
+export type FarmingStat = typeof FARMING_STATS[number];
+export type GeneticStat = typeof GENETIC_STATS[number];
+export type PersonalityTrait = typeof PERSONALITY_TRAITS[number];
+
+// ─── Difficulty ───────────────────────────────────────────────
 export const DIFFICULTIES = ["Easy", "Advanced", "Nightmare"] as const;
 export type Difficulty = typeof DIFFICULTIES[number];
 
@@ -66,6 +137,7 @@ export const DIFFICULTY_CONFIG: Record<Difficulty, {
   },
 };
 
+// ─── Legacy ───────────────────────────────────────────────────
 export const LEGACY_TIERS = ["Tier I", "Tier II", "Tier III", "Tier IV", "Tier V"] as const;
 export type LegacyTier = typeof LEGACY_TIERS[number];
 
@@ -75,23 +147,34 @@ export const EQUIPMENT_SLOTS = ["Bomb Core", "Engine", "Armor", "Memory Chip", "
 
 export const COSMETIC_SLOTS = ["Helmet", "Suit", "Trail", "Bomb Effect", "Aura", "Drone"] as const;
 
-export const ENERGY_REGEN_INTERVAL = 300000; // 5 minutes
+export const ENERGY_REGEN_INTERVAL = 300000;
 export const ENERGY_REGEN_AMOUNT = 1;
 
-export const HERO_HATCH_COST = "25"; // 25 0BOMB per hatch
-export const LOOT_MINT_COST = "5";   // 5 0BOMB per loot mint
-export const COSMETIC_MINT_COST = "10"; // 10 0BOMB per cosmetic mint
+export const HERO_HATCH_COST = "25";
+export const LOOT_MINT_COST = "5";
+export const COSMETIC_MINT_COST = "10";
 export const TREASURY_ADDRESS = "0xa8DAb875Eb73173C8C96215445263AA6a6851Af6";
 
 export const MEMORY_EVENTS = [
   "Killed Alien", "Found Rare Loot", "Touched Lava",
   "Near Death Escape", "Perfect Clear", "Boss Kill",
+  "Survived Lava", "Found Legendary Item", "Perfect Farming Run", "Died To Trap",
 ] as const;
 
-export const TRAITS = [
-  "Lava Survivor", "Treasure Hunter", "Bomb Master",
-  "Fast Learner", "Explorer", "Alien Slayer",
-] as const;
+export const TRAIT_DEFINITIONS: Record<string, { label: string; bonus: Partial<Record<StatName, number>>; description: string }> = {
+  "Loot Goblin": { label: "Loot Goblin", bonus: { luck: 15 }, description: "+15 Luck" },
+  "Bomb Expert": { label: "Bomb Expert", bonus: { power: 20 }, description: "+20 Power" },
+  Survivor: { label: "Survivor", bonus: { defense: 20 }, description: "+20 Defense" },
+  Explorer: { label: "Explorer", bonus: { exploration: 20 }, description: "+20 Exploration" },
+  "Tactical Genius": { label: "Tactical Genius", bonus: { intelligence: 20 }, description: "+20 Intelligence" },
+  "Lava Survivor": { label: "Lava Survivor", bonus: { defense: 10, risk_awareness: 10 }, description: "+10 Defense +10 Risk Awareness" },
+  "Treasure Hunter": { label: "Treasure Hunter", bonus: { treasure_hunter: 15, luck: 5 }, description: "+15 Treasure Hunter +5 Luck" },
+  "Bomb Master": { label: "Bomb Master", bonus: { power: 10, intelligence: 5 }, description: "+10 Power +5 Intelligence" },
+  "Fast Learner": { label: "Fast Learner", bonus: { learning_rate: 15 }, description: "+15 Learning Rate" },
+  "Alien Slayer": { label: "Alien Slayer", bonus: { power: 10, aggression: 10 }, description: "+10 Power +10 Aggression" },
+  "Speed Demon": { label: "Speed Demon", bonus: { speed: 15 }, description: "+15 Speed" },
+  "Iron Will": { label: "Iron Will", bonus: { vitality: 15 }, description: "+15 Vitality" },
+};
 
 export const ENEMIES = [
   "Crawler", "Spitter", "Burrower", "Hunter",
@@ -103,12 +186,6 @@ export const BOSSES = ["Lava Titan", "Hive Queen", "Ancient Guardian", "Void Dra
 export const BIOMES = [
   "Crash Site", "Crystal Desert", "Toxic Swamp", "Volcanic Core",
   "Frozen Wasteland", "Alien Hive", "Ancient Ruins", "Void Sector",
-] as const;
-
-export const PERSONALITY_TRAITS = ["Aggressive", "Careful", "Curious", "Greedy", "Social", "Chaotic"] as const;
-
-export const INTELLIGENCE_TYPES = [
-  "Combat", "Survival", "Loot", "Hazard Recognition", "Pathfinding", "Resource Optimization",
 ] as const;
 
 export const UPGRADE_SEEDS = ["Power", "Speed", "Range", "Vital", "Luck", "Intelligence"] as const;
