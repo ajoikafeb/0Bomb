@@ -1,6 +1,4 @@
 <div align="center">
-  <img src="./public/logo.png" alt="0GBomber Logo" width="120" />
-  <br/>
   <img src="./public/banner.png" alt="0GBomber Banner" width="100%" />
 </div>
 
