@@ -78,11 +78,14 @@ When a map is cleared, a `RewardChest` is generated containing:
 
 | Item | Base Drop Rate | Scaling Factors |
 |---|---|---|
-| Common Equipment | 20% | Luck, Treasure Hunter, Clear Time Bonus, Difficulty |
-| Rare Equipment | 3% | Luck, Treasure Hunter, Clear Time Bonus, Difficulty |
-| Upgrade Seed | 5% | Luck, Treasure Hunter, Clear Time Bonus |
-| Fragments | 40% | Difficulty Config, Clear Time Bonus |
-| Potions | Per-battle find | 30% chance per kill |
+| Common Equipment | 20% | Luck, Treasure Hunter, Clear Time Bonus, Difficulty, XP Multiplier |
+| Rare Equipment | 3% | Luck, Treasure Hunter, Clear Time Bonus, Difficulty, XP Multiplier |
+| Legendary Equipment | 0.25% | Luck, Treasure Hunter, Clear Time Bonus, Difficulty, XP Multiplier |
+| Cosmetic | Varies by difficulty | Difficulty `cosmeticChance`, Clear Time Bonus, XP Multiplier |
+| Upgrade Seed | 5% | Luck, Treasure Hunter, Clear Time Bonus, XP Multiplier |
+| Fragments | Guaranteed | Difficulty Config, Clear Time Bonus, kills bonus, Luck, Treasure Hunter |
+
+> Potions are collected during battle (30% chance per kill), not from the reward chest.
 
 ### Clear Time Bonus
 
