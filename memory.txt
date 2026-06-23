@@ -1,0 +1,53 @@
+# 0GBomber - Shared Agent Memory
+
+## Project State
+- Brief: brief.txt (full game spec)
+- Latest build: ✅ All 13 routes pass clean
+- Next.js 16.2.9, TypeScript strict, TailwindCSS v4, Phaser 3, ethers v6
+- Chain: 0G Galileo Testnet (ID: 16602)
+- Token: 0BOMB (0xB9Ca501a3e59716F328552C7BA26d1fa68Dc76E6)
+- Owner Wallet: 0xa8DAb875Eb73173C8C96215445263AA6a6851Af6
+
+## Key Architecture Decisions
+- All pixel art = React SVG components (crispEdges), zero external images
+- Game state via localStorage (Supabase ready when configured)
+- Phaser 3 with dynamic SSR-safe import (`ssr:false`)
+- Single-file landing page (`page.tsx`), modular game pages
+
+## Pages (13 routes)
+| Route | Status | Description |
+|---|---|---|
+| / | ✅ | Landing (11 sections, particles, glassmorphism, real leaderboard) |
+| /admin | ✅ | Admin dashboard (economy, generators, bans, audit, withdrawals) |
+| /game | ✅ | Game hub (Phaser canvas, squad, battle status, pixel sprites) |
+| /heroes | ✅ | Hero management (pixel sprites, equipment slots) |
+| /history | ✅ | Transactions + Withdrawals tabs with status badges |
+| /inbox | ✅ | Inbox messages (withdrawal confirm/reject notifications) |
+| /inventory | ✅ | Equipment + cosmetics cards with pixel icons |
+| /leaderboard | ✅ | Single-player personal rankings (global when Supabase connected) |
+| /legacy | ✅ | Legacy creation, Hall of Fame, bloodline tree |
+| /maintenance | ✅ | Maintenance redirect page |
+| /market | ✅ | Hero + equipment listings with pixel sprites |
+| /profile | ✅ | Player profile |
+| /_not-found | ✅ | Custom 404 |
+
+## Core Systems (All Live)
+- **Wallet**: Connect/disconnect, auto-reconnect, balance display
+- **Heroes**: Hatch, deploy, play, AI decision engine, XP, leveling
+- **Memories**: Recorded from gameplay (Killed Alien, Found Rare Loot, etc.)
+- **Intelligence**: Stats grow through actions (Combat, Survival, Loot, etc.)
+- **Traits**: Auto-unlock (Lava Survivor, Treasure Hunter, Bomb Master, etc.)
+- **Legacy**: Lv10+ & intel 90+ → Legendary → Gen2 child hero
+- **Energy**: Per-hero energy with regen, potions
+- **Equipment/Cosmetics**: Slot-based, generated, tradeable
+- **Marketplace**: List/buy heroes, equipment, cosmetics
+- **Cryo Pods**: 5 rarities with hatch gacha
+- **Withdrawals**: Request fragments, admin confirm/reject → inbox notification
+- **AI**: BFS escape pathfinding, wall bombing, enemy evasion
+- **Audio**: 128-step procedural music sequencer (pad, arp, lead, drums)
+
+## Known Issues / Configuration
+- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` env vars needed
+- `OWNER_WALLET` in `src/lib/game/constants.ts` — currently 0xa8DAb875Eb73173C8C96215445263AA6a6851Af6
+- RPC endpoint for 0G Galileo Testnet for live token balance
+- Leaderboard only shows current player (global needs Supabase)

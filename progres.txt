@@ -1,0 +1,166 @@
+# 0GBomber - Progres & Build Log
+
+## [2026-06-22] Initial Setup
+### Completed
+- Created project directory
+- Wrote brief.txt (full game specification)
+- Wrote memory.txt (shared agent memory)
+- Wrote progres.txt (this log file)
+
+## [2026-06-22] Next.js 16 Project Initialization
+### Completed
+- Initialized Next.js 16.2.9 with TypeScript + TailwindCSS v4
+- Installed: phaser@3, ethers@6, @supabase/supabase-js
+- Created full project directory structure
+- Created database schema (schema.sql) with all tables
+
+### Pages Built
+- / (Landing page), /game (Game Hub), /heroes (Hero Management)
+- /legacy (Legacy System), /market (Marketplace)
+- /admin (Admin Dashboard), /maintenance (Maintenance page)
+
+## [2026-06-22] Phaser 3 Game Engine Integration
+### Completed
+- Full Bomberman-style scene (BomberScene.ts) with 17x13 grid
+- Player movement (Arrow/WASD), bombs (Spacebar), explosions
+- Destructible blocks, power-ups, enemies (Crawler, Spitter, Burrower, Hunter)
+- Lava hazard system, game over screen
+- React wrapper (GameCanvas.tsx) with dynamic SSR-safe import
+
+## [2026-06-22] Memory, Trait, XP & Legacy Systems
+### Completed
+- GameStateManager.ts — Full state persistence (localStorage)
+- Memory system, trait evolution, XP/leveling, intelligence growth
+- Legacy system (Lv10+ & intel 90+), bloodline tracking
+- Heroes persist across page refreshes
+
+## [2026-06-22] AI Decision Engine — Suicide Bombing Fix
+### Completed
+- Added `canEscapeBlast(state, hero, range)` with BFS 3 steps
+- Added `wouldBombHitTarget(state, hero, range)` — checks enemy/wall
+- `shouldBomb()` gate prevents suicide bombing
+- Wall check only 4 cardinal directions; bomb range = 2 + intel bonus (max 5)
+
+## [2026-06-22] Hero Idle/Freeze Fix
+### Completed
+- Enemy check in `canEscapeBlast` BFS so escape paths avoid enemies
+- `wander` tries all 4 shuffled directions
+- `explore`/`wander` fallback: bombs wall if stuck
+- `collect_loot` tries horizontal then vertical
+- Aggressive heroes (agg>65) may bomb despite blocked escape
+- `evade` tries all directions sorted by distance from threat
+- `enemy_adjacent` checks `bombCooldown` before returning "bomb"
+
+## [2026-06-22] Music Expansion
+### Completed
+- audioManager.ts sequence length 32→128 steps (~13s loop)
+- New `crash()` and `openhh()` cymbal functions
+- Bass expanded to 32 quarter notes (8-measure progression)
+- Pad chords 4→16 positions, arpeggio 128 notes (4 phrases)
+- Lead melody 16 notes, drum fills, crash on section boundaries
+
+## [2026-06-22] App Logo
+### Completed
+- Logo PNG at `public/logo.png`
+- Updated metadata: icons (favicon + apple), openGraph.images
+- Navbar `<Image>` component replaces gradient placeholder
+
+## [2026-06-22] Landing Page Rewrite
+### Completed
+- 11-section AAA gaming landing page
+- Hero (particle canvas, gradient title, 2 CTAs)
+- Features (6 glassmorphism cards), Gameplay Showcase (4 panels)
+- Cryo Pods (5 rarities), Hero Classes (7 classes with pixel art)
+- AI Evolution Timeline, $0BOMB Token, Marketplace
+- Roadmap (5 phases), Leaderboard (later: real data), Footer
+
+## [2026-06-22] Pixel Art Asset Library
+### Completed
+- `src/components/pixel-art/characters.tsx` — 7 hero sprites (16×16), 9 enemy sprites, 5 cryo pods
+- `src/components/pixel-art/assets.tsx` — ~40 icons: equipment, cosmetics, traits, badges, UI, environments
+- All use `shapeRendering="crispEdges"` with 8×8/12×12/16×16 grids
+- Fixed duplicate key bug (Scientist glasses → map index instead of x-y)
+
+## [2026-06-22] Pixel Art → Game UI Integration
+### Completed
+- Heroes page: Pixel sprites (28px list, 64px detail), slot icons
+- Game page: Sprites in squad selection, selected squad, battle status
+- Inventory page: Equipment slot icons, cosmetic type icons
+- Market page: Hero sprites (32px), equipment icons (24px)
+
+## [2026-06-22] Footer, metadataBase
+### Completed
+- Footer: "Powered by 0Bomb@2026"
+- `metadataBase` in layout.tsx: `https://0gbomber.vercel.app`
+
+## [2026-06-22] Withdrawal Status in History + Inbox
+### Completed
+- Added `getMyWithdrawals(address)` to GameStateManager
+- History page: tabs (Transactions / Withdrawals)
+- Withdrawals tab: status badges (Pending/Completed/Rejected), TX hash
+- Admin confirmWithdrawal/rejectWithdrawal → inbox message to player
+- Inbox notification on withdrawal status change (already working)
+
+## [2026-06-22] Leaderboard — Real Data
+### Completed
+- Added `getGlobalLeaderboard()` to GameStateManager
+  - Groups heroes by owner_address
+  - Computes kills (Killed Alien memories), score (level×100 + memories×50)
+  - Resolves usernames, tracks legendary count
+  - Returns sorted entries with rank
+- Landing page LeaderboardSection now reactive (real data)
+- 3 functional tabs: Top Heroes (kills), Top Bloodlines (legendary), Top Farmers (score)
+- Added ADDRESS + USERNAME columns to table
+
+## Build History
+- ✅ All builds pass clean (TypeScript strict + Next.js 16.2.9 Turbopack)
+- ✅ 13 routes compile: /, /admin, /game, /heroes, /history, /inbox, /inventory, /leaderboard, /legacy, /maintenance, /market, /profile, /_not-found
+
+## Pending Configuration
+- NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY env vars
+- OWNER_WALLET in constants.ts (currently: 0xa8DAb875Eb73173C8C96215445263AA6a6851Af6)
+- RPC endpoint for 0G Galileo Testnet
+
+## File Structure
+```
+src/
+├── app/
+│   ├── layout.tsx          # Root layout (metadataBase, fonts, WalletProvider)
+│   ├── page.tsx            # Landing page (11 sections, particle canvas)
+│   ├── globals.css         # Theme, scanline, glow, pulse, float animations
+│   ├── admin/page.tsx      # Admin dashboard (hero/item gen, economy, bans, audit)
+│   ├── game/page.tsx       # Game hub (Phaser canvas, squad, battle status)
+│   ├── heroes/page.tsx     # Hero management (list, detail, pixel sprites)
+│   ├── history/page.tsx    # History (Transactions + Withdrawals tabs)
+│   ├── inbox/page.tsx      # Inbox messages
+│   ├── inventory/page.tsx  # Inventory (equipment + cosmetics cards)
+│   ├── leaderboard/page.tsx # Single-player personal rankings
+│   ├── legacy/page.tsx     # Legacy system, Hall of Fame, bloodline
+│   ├── maintenance/page.tsx # Maintenance redirect page
+│   ├── market/page.tsx     # Marketplace (hero + equipment listings)
+│   └── profile/page.tsx    # Player profile
+├── components/
+│   ├── game/GameCanvas.tsx      # Phaser React wrapper
+│   ├── layout/Navbar.tsx        # Nav (logo, links, wallet)
+│   ├── layout/Footer.tsx        # Footer ("Powered by 0Bomb@2026")
+│   ├── pixel-art/assets.tsx     # 40+ pixel art UI icons
+│   ├── pixel-art/characters.tsx # 7 hero + 9 enemy + 5 cryo pod sprites
+│   └── wallet/ (ConnectButton, WalletProvider)
+├── hooks/useWallet.ts           # Wallet state hook
+└── lib/
+    ├── game/
+    │   ├── GameStateManager.ts  # Full state mgmt (localStorage)
+    │   ├── AIDecisionEngine.ts  # Hero AI decision logic
+    │   ├── types.ts             # TypeScript interfaces
+    │   ├── constants.ts         # Game constants
+    │   ├── heroGenerator.ts     # Hero DNA generation
+    │   ├── equipmentSystem.ts   # Equipment generation
+    │   ├── cosmeticSystem.ts    # Cosmetic generation
+    │   ├── dropRates.ts         # Loot table rates
+    │   ├── sprites.tsx          # Inline SVG helpers
+    │   └── phaser/BomberScene.ts # Phaser 3 game scene
+    ├── audio/audioManager.ts    # 128-step music sequencer
+    ├── assets/pixelart.ts       # Old pixel art (Canvas API)
+    ├── blockchain/provider.ts   # Wallet connection
+    └── supabase/ (client.ts, schema.sql)
+```

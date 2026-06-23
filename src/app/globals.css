@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #06b6d4;
+  --color-cyan-600: #0891b2;
+  --color-purple-400: #a78bfa;
+  --color-purple-500: #8b5cf6;
+  --color-purple-600: #7c3aed;
+  --color-dark: #0a0a1a;
+  --color-dark-2: #12122a;
+  --color-dark-3: #1a1a3e;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #22d3ee33 transparent;
+}
+
+body {
+  background: #0a0a1a;
+  color: #e2e8f0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+.pixel-border {
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.3), 0 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+.glow-cyan {
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.3), 0 0 20px rgba(34, 211, 238, 0.1);
+}
+
+.glow-purple {
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.3), 0 0 20px rgba(139, 92, 246, 0.1);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+.scanline::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(transparent, rgba(34, 211, 238, 0.1), transparent);
+  animation: scanline 4s linear infinite;
+  pointer-events: none;
+}

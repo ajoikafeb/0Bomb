@@ -1,0 +1,186 @@
+# 0GBomber - Ultimate Master Prompt for AI Vibe Coding Agent
+
+## Project Overview
+Game Name: 0GBomber
+Token: 0Bomb
+Ticker: 0BOMB
+Token Contract: 0xB9Ca501a3e59716F328552C7BA26d1fa68Dc76E6
+Chain: 0G Galileo Testnet
+Chain ID: 16602
+Genre: AI-Native Autonomous Bomber Game
+Platform: Browser
+Art Style: Pixel Art
+Character Style: Chibi Pixel Human Space Survivors
+Theme: Sci-Fi Colony Survival
+Visual Quality: Modern polished indie game quality.
+Owner wallet : 0xa8DAb875Eb73173C8C96215445263AA6a6851Af6
+
+## Game Lore
+Humanity's colony ship crash-landed on a hostile alien planet. Thousands of human survivors remain frozen inside Cryo Pods. Players awaken survivors and send them into dangerous sectors to clear maps, fight alien creatures, collect resources, learn from experiences, and build powerful bloodlines.
+
+## Core Game Loop
+Acquire Cryo Pod → Hatch Hero → Deploy Hero → Clear Map → Fight Aliens → Avoid Hazards → Collect Loot → Gain XP → Gain Memories → Increase Intelligence → Unlock Traits → Become Legendary → Create Legacy Core → Transfer Knowledge → Build Bloodline
+
+## Technology Stack
+- Frontend: Next.js 16
+- Language: TypeScript
+- Styling: TailwindCSS
+- Game Engine: Phaser 3
+- Blockchain: ethers.js v6
+- Backend: Supabase
+- Database: PostgreSQL
+- Deployment: Vercel
+- Wallet Support: Rabby, MetaMask
+- Architecture: Modular and scalable
+
+## Wallet System
+- Connect Wallet
+- Auto Reconnect
+- Wallet Detection (Rabby, MetaMask)
+- Display: Wallet Address, 0BOMB Balance, Connected Network
+
+## Owner System
+- OWNER_WALLET configuration
+- Developer Mode when owner connects
+- Admin Badge and Admin Dashboard
+
+## Admin Features
+- Hero Generator, Cryo Pod Generator, Loot Generator
+- Cosmetic Generator, Equipment Generator
+- AI Debug Panel, Trait Unlock Tool
+- Legacy Creation Tool, Instant XP Tool
+- Unlimited Energy Toggle, Map Completion Tool
+- Economy Panel, Marketplace Controls
+- Event Controls, Maintenance Controls
+
+## Dynamic Economy Control
+- Reward Multiplier, Currency Drop Rate
+- Equipment Drop Rate, Cosmetic Drop Rate
+- Upgrade Seed Drop Rate, Rare Loot Drop Rate
+- Event Reward Multiplier
+- Real-time global changes via database config
+
+## Maintenance System
+- Global Maintenance Toggle
+- Normal players redirected to /maintenance
+- Owner Wallet has full access during maintenance
+
+## Emergency Shutdown
+- Disable Marketplace, Trading, Reward Claims, Currency Conversion
+- Without disabling login
+
+## Hero System
+- Fields: Hero ID, Name, Class, Rarity, Level, Energy, Generation, Legacy Tier, Personality, Intelligence, Traits, Equipment, Memories, Badges
+
+## Hero Classes
+Engineer, Scout, Marine, Scientist, Medic, Commander, Miner
+
+## Hero Rarity
+Common, Rare, Epic, Legendary, Mythic, Genesis
+
+## Energy System
+- Common: 80-120, Rare: 100-150, Epic: 130-180
+- Legendary: 160-220, Mythic: 200-260, Genesis: 220-300
+
+## AI DNA System
+- Permanent personality values (0-100): Aggressive, Careful, Curious, Greedy, Social, Chaotic
+
+## Intelligence System
+- Combat, Survival, Loot, Hazard Recognition, Pathfinding, Resource Optimization
+- Range: 1-100, improves through gameplay
+
+## Memory System
+- Heroes record experiences: Killed Alien, Found Rare Loot, Touched Lava, Near Death Escape, Perfect Clear, Boss Kill
+
+## Trait System
+- Unlock through actions: Lava Survivor, Treasure Hunter, Bomb Master, Fast Learner, Explorer, Alien Slayer
+
+## Achievement Badges
+- Combat, Loot, Survival, AI Intelligence, Legendary, Founder, Seasonal
+
+## Equipment System
+- Slots: Bomb Core, Engine, Armor, Memory Chip, Scanner, Utility Device
+
+## Cosmetic System
+- Visual customization with minor stat bonuses: Helmets, Suits, Trails, Bomb Effects, Auras, Drones
+
+## Cryo Pod System
+- Founder Cryo Pod (10,000 supply) and Standard Cryo Pod
+- Hero acquisition through hatch system
+
+## Gacha System
+- Cryo Pod Gacha, Equipment Gacha, Cosmetic Gacha
+- Everything obtainable through gameplay
+
+## Map System
+- Maximum Active Maps: 4
+- Maximum Heroes Per Map: 5
+- Quick-switch between maps
+
+## Difficulty Levels
+Easy, Advanced, Nightmare
+- Higher difficulty: More XP, More Loot, Faster Learning, Stronger Enemies, More Hazards
+
+## Hazard System
+Lava, Poison, Acid, Radiation, Gravity Anomalies, Ice Traps, Laser Turrets
+
+## Enemies
+Crawler, Spitter, Burrower, Hunter, Hive Guard, Void Beast, Titan
+
+## Boss System
+- Lava Titan, Hive Queen, Ancient Guardian, Void Dragon
+- Drops: Rare Loot, Equipment, Cosmetics, Badges, Relics
+
+## Loot System
+Currency, Equipment, Cosmetics, Materials, Blueprints, Relics, Upgrade Seeds, AI Training Items
+
+## Upgrade Seeds
+Power Seed, Speed Seed, Range Seed, Vital Seed, Luck Seed, Intelligence Seed
+
+## Currency System
+- Primary Gameplay Currency: SPROUT
+- Blockchain Currency: 0BOMB
+
+## Marketplace
+- Tradable: Heroes, Equipment, Cosmetics, Cryo Pods
+- Marketplace Fee: 2.5%
+
+## Legacy System
+- Level 100 Hero, Max Intelligence, Major Achievements → Legendary → Legacy Core → Transfer to New Hero
+
+## Legacy Tiers
+Tier I, Tier II, Tier III, Tier IV, Tier V
+
+## Bloodline System
+- Heroes belong to generations (Gen 1, Gen 2, etc.)
+- Track lineage history
+
+## Hall of Fame
+- Retired Legendary Heroes permanently stored with Hero Name, Achievements, Generation, Legacy Tier
+
+## NFT Architecture
+- Current MVP: Integrate wallet and token only
+- Prepare architecture for: Founder Cryo Pod NFT, Hero NFT, Equipment NFT, Cosmetic NFT
+- Do not deploy NFTs yet
+
+## Pages to Build
+- / Landing Page
+- /game Main Game
+- /heroes Hero Management
+- /legacy Legacy System
+- /market Marketplace
+- /admin Admin Dashboard
+- /maintenance Maintenance Page
+
+## Graphics Generation Requirements
+- Generate ALL assets automatically - no placeholders
+- Complete pixel-art asset pack: Characters (32x32, top-down Bomberman style), Enemies, Map tilesets (8 biomes), UI assets, Web banners, Logo (neon blue/purple)
+
+## Landing Page
+- AAA-quality: Hero Section, Features, AI Learning, Legacy System, Marketplace, Roadmap, Token Section, Connect Wallet, Call To Action
+
+## MVP Demo Flow
+Connect Wallet → View 0BOMB Balance → Hatch Hero → Generate Personality → Enter Map → Encounter Hazard → Gain Memory → Unlock Trait → Gain XP → Create Legacy Core → Transfer Legacy → View Bloodline → Access Marketplace → Admin Controls (Owner Only)
+
+## Final Goal
+Create a production-ready, AI-native autonomous bomber game with AI Learning, Memory Persistence, Trait Evolution, Legacy Inheritance, Bloodline Progression, Blockchain Integration, and Modern Web3 Game Design.
