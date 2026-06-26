@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
+import type { Database } from "./database.types";
 
-let _supabase: ReturnType<typeof createClient> | null = null;
+let _supabase: ReturnType<typeof createClient<Database>> | null = null;
 
 export function getSupabase() {
   if (!_supabase) {
@@ -9,7 +10,7 @@ export function getSupabase() {
     if (!supabaseUrl || !supabaseAnonKey) {
       throw new Error("supabaseUrl is required");
     }
-    _supabase = createClient(supabaseUrl, supabaseAnonKey);
+    _supabase = createClient<Database>(supabaseUrl, supabaseAnonKey);
   }
   return _supabase;
 }
