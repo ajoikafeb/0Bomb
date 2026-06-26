@@ -643,8 +643,28 @@ function LeaderboardSection() {
   const categories = ["Top Heroes", "Top Bloodlines", "Top Farmers"];
 
   useEffect(() => {
-    const data = getGlobalLeaderboard();
-    setEntries(data);
+    async function load() {
+      if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        const { fetchGlobalLeaderboard } = await import("@/lib/supabase/leaderboard");
+        const global = await fetchGlobalLeaderboard();
+        if (global.length > 0) {
+          setEntries(global.map((e, i) => ({
+            rank: i + 1,
+            address: e.address,
+            username: e.address.slice(0, 6) + "..." + e.address.slice(-4),
+            kills: e.totalKills,
+            score: e.totalLevel * 100,
+            heroes: e.heroCount,
+            legendaryCount: e.legendaryCount,
+            topHeroName: "Hero",
+          })));
+          return;
+        }
+      }
+      const data = getGlobalLeaderboard();
+      setEntries(data);
+    }
+    load();
   }, []);
 
   const sorted = [...entries];

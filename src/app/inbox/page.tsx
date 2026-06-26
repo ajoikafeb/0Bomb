@@ -1,56 +1,96 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useWalletContext } from "@/components/wallet/WalletProvider";
 import { getMyInbox, markMessageRead, markAllRead, deleteMessage, clearAllMessages } from "@/lib/game/GameStateManager";
+import { fetchNotifications, markNotificationRead, markAllNotificationsRead, deleteNotification } from "@/lib/supabase/notifications";
+import { isSyncEnabled } from "@/lib/supabase/sync";
 import type { InboxMessage } from "@/lib/game/GameStateManager";
+import type { GameNotification } from "@/lib/supabase/notifications";
 
 const TYPE_ICONS: Record<string, string> = {
-  battle: "⚔",
-  market: "🏪",
-  legacy: "⭐",
-  system: "🔧",
-  reward: "🎁",
+  battle: "⚔", market: "🏪", legacy: "⭐", system: "🔧", reward: "🎁",
+  info: "ℹ️", success: "✅", warning: "⚠️", error: "❌",
+  admin: "📢", achievement: "🏆", maintenance: "🔧",
 };
 
 export default function InboxPage() {
   const { isConnected, address } = useWalletContext();
-  const [messages, setMessages] = useState<InboxMessage[]>([]);
+  const [localMessages, setLocalMessages] = useState<InboxMessage[]>([]);
+  const [remoteNotifs, setRemoteNotifs] = useState<GameNotification[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [useRemote, setUseRemote] = useState(false);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     if (!address) return;
-    setMessages(getMyInbox(address));
-  };
+    const local = getMyInbox(address);
+    setLocalMessages(local);
+    if (isSyncEnabled()) {
+      fetchNotifications(address).then(notifs => {
+        if (notifs.length > 0) {
+          setRemoteNotifs(notifs);
+          setUseRemote(true);
+        }
+      });
+    }
+  }, [address]);
 
   useEffect(() => {
     if (isConnected && address) refresh();
-  }, [isConnected, address]);
+  }, [isConnected, address, refresh]);
 
-  const handleRead = (id: string) => {
-    markMessageRead(id);
+  const messages = useRemote
+    ? remoteNotifs.map(n => ({
+        id: n.id,
+        title: n.title,
+        body: n.body,
+        type: n.type === "market" ? "market" : n.type === "legacy" ? "legacy" : n.type === "maintenance" ? "system" : n.type === "admin" ? "system" : n.type === "reward" ? "reward" : "system",
+        targetAddress: n.owner_wallet,
+        read: n.read,
+        created_at: n.created_at,
+      } as InboxMessage))
+    : localMessages;
+
+  const unread = messages.filter(m => !m.read).length;
+
+  const handleRead = async (id: string) => {
+    if (useRemote) {
+      await markNotificationRead(id);
+    } else {
+      markMessageRead(id);
+    }
     setSelected(id);
     refresh();
   };
 
-  const handleMarkAllRead = () => {
-    markAllRead();
+  const handleMarkAllRead = async () => {
+    if (useRemote && address) {
+      await markAllNotificationsRead(address);
+    } else {
+      markAllRead();
+    }
     refresh();
   };
 
-  const handleDelete = (id: string) => {
-    deleteMessage(id);
+  const handleDelete = async (id: string) => {
+    if (useRemote) {
+      await deleteNotification(id);
+    } else {
+      deleteMessage(id);
+    }
     if (selected === id) setSelected(null);
     refresh();
   };
 
   const handleClearAll = () => {
-    clearAllMessages();
+    if (useRemote && address) {
+      remoteNotifs.forEach(n => deleteNotification(n.id));
+    } else {
+      clearAllMessages();
+    }
     setSelected(null);
     refresh();
   };
-
-  const unread = messages.filter(m => !m.read).length;
 
   if (!isConnected) {
     return (
@@ -68,6 +108,7 @@ export default function InboxPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
           Inbox {unread > 0 && <span className="text-xs text-yellow-400">({unread} unread)</span>}
+          {useRemote && <span className="text-[9px] text-cyan-500 ml-2">● live</span>}
         </h1>
         <div className="flex gap-1">
           {unread > 0 && (

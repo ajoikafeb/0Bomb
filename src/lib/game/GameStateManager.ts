@@ -9,6 +9,7 @@ import { generateHero } from "@/lib/game/heroGenerator";
 import { countDestructibleTiles } from "@/lib/game/AIDecisionEngine";
 import { fetchActiveListings as fetchRemoteListings, createListingRemote, updateListingStatus as updateListingRemote } from "@/lib/supabase/marketplace";
 import { syncHeroes, syncInventory, syncCosmetics, syncAdminConfig, syncMarketplaceListings, syncProfile, deleteHeroRemote, deleteInventoryRemote, deleteCosmeticRemote, enableSync, isSyncEnabled } from "@/lib/supabase/sync";
+import { sendNotification } from "@/lib/supabase/notifications";
 
 const STORAGE_KEY = "0gbomber_state";
 
@@ -1250,6 +1251,15 @@ export function addInboxMessage(msg: Omit<InboxMessage, "id" | "read" | "created
   save.inbox.unshift(message);
   if (save.inbox.length > 100) save.inbox = save.inbox.slice(0, 100);
   saveState(save);
+  // Also push to Supabase notifications if target is specified
+  if (isSyncEnabled() && msg.targetAddress) {
+    const notifType = msg.type === "battle" ? "reward" as const
+      : msg.type === "market" ? "market" as const
+      : msg.type === "legacy" ? "legacy" as const
+      : msg.type === "system" ? "info" as const
+      : "info" as const;
+    sendNotification(msg.targetAddress, notifType, msg.title, msg.body || "");
+  }
   return message;
 }
 

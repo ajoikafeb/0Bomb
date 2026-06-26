@@ -1,6 +1,7 @@
 import { loadSave, saveState } from "@/lib/game/GameStateManager";
 import { getSupabase } from "./client";
 import { supabaseLogger } from "./logger";
+import { clearAllSubscriptions } from "./realtime";
 import type { Hero } from "@/lib/game/types";
 import type { Equipment } from "@/lib/game/equipmentSystem";
 import type { Cosmetic } from "@/lib/game/cosmeticSystem";
@@ -16,6 +17,17 @@ function db() {
 let _lastSyncAddress: string | null = null;
 let _syncing = false;
 
+const GAME_STORAGE_KEY = "0gbomber_state";
+
+function clearGameData() {
+  try {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(GAME_STORAGE_KEY);
+      supabaseLogger("Game data cleared from localStorage for session isolation");
+    }
+  } catch {}
+}
+
 export function getLastSyncAddress() {
   return _lastSyncAddress;
 }
@@ -24,8 +36,16 @@ export function isDataSyncing() {
   return _syncing;
 }
 
-export async function pullFromSupabase(address: string): Promise<boolean> {
+export async function pullFromSupabase(address: string, force = false): Promise<boolean> {
   if (!isConnected() || !address || _syncing) return false;
+
+  // Session isolation: if switching wallets, clear old data first
+  if (_lastSyncAddress && _lastSyncAddress !== address) {
+    supabaseLogger(`Wallet switch detected: ${_lastSyncAddress.slice(0,6)} → ${address.slice(0,6)}. Clearing localStorage`);
+    clearGameData();
+    clearAllSubscriptions();
+  }
+
   _syncing = true;
 
   try {
@@ -45,9 +65,9 @@ export async function pullFromSupabase(address: string): Promise<boolean> {
     const remoteProfile = profileRes.status === "fulfilled" ? profileRes.value.data : null;
     const remoteConfig = configRes.status === "fulfilled" ? configRes.value.data : null;
 
-    const hasData = remoteHeroes?.length || remoteInv?.length || remoteCos?.length || remoteProfile;
-    if (!hasData) {
-      supabaseLogger("No remote data found, keeping localStorage");
+    const hasRemoteData = remoteHeroes?.length || remoteInv?.length || remoteCos?.length || remoteProfile;
+    if (!hasRemoteData) {
+      supabaseLogger("No remote data found for this wallet");
       _lastSyncAddress = address;
       _syncing = false;
       return false;
@@ -57,47 +77,41 @@ export async function pullFromSupabase(address: string): Promise<boolean> {
 
     const save = loadSave();
 
-    // Merge remote heroes (only for this address)
     if (remoteHeroes && remoteHeroes.length > 0) {
-      const remoteIds = new Set(remoteHeroes.map(h => h.id));
-      save.heroes = [
-        ...save.heroes.filter(h => h.owner_address !== address || !remoteIds.has(h.id)),
-        ...remoteHeroes,
-      ];
+      save.heroes = remoteHeroes;
+    } else {
+      save.heroes = [];
     }
 
     if (remoteInv && remoteInv.length > 0) {
-      const remoteIds = new Set(remoteInv.map(i => i.id));
-      save.inventory = [
-        ...save.inventory.filter(i => i.owner !== address || !remoteIds.has(i.id)),
-        ...remoteInv,
-      ];
+      save.inventory = remoteInv;
+    } else {
+      save.inventory = [];
     }
 
     if (remoteCos && remoteCos.length > 0) {
-      const remoteIds = new Set(remoteCos.map(c => c.id));
-      save.cosmetics = [
-        ...save.cosmetics.filter(c => c.owner !== address || !remoteIds.has(c.id)),
-        ...remoteCos,
-      ];
+      save.cosmetics = remoteCos;
+    } else {
+      save.cosmetics = [];
     }
 
-    // Merge profile balance
     if (remoteProfile) {
       const addr = remoteProfile.address.toLowerCase();
       if (!save.tokenBalances) save.tokenBalances = {};
-      save.tokenBalances[addr] = (save.tokenBalances[addr] || 0) + Number(remoteProfile.spout_balance || 0);
+      save.tokenBalances[addr] = Number(remoteProfile.spout_balance || 0);
     }
 
-    // Merge admin config from remote (if we're admin)
     if (remoteConfig && save.adminConfig) {
-      save.adminConfig.globalMaintenance = remoteConfig.maintenance_mode ?? save.adminConfig.globalMaintenance;
-      save.adminConfig.rewardMultiplier = remoteConfig.reward_multiplier ?? save.adminConfig.rewardMultiplier;
+      save.adminConfig.globalMaintenance = remoteConfig.maintenance_mode || false;
+      save.adminConfig.marketplacePaused = !remoteConfig.marketplace_enabled || false;
+      save.adminConfig.tradingPaused = !remoteConfig.trading_enabled || false;
+      save.adminConfig.rewardsPaused = !remoteConfig.reward_claims_enabled || false;
+      save.adminConfig.rewardMultiplier = remoteConfig.reward_multiplier || 1.0;
     }
 
     saveState(save);
     _lastSyncAddress = address;
-    supabaseLogger("Supabase data merged into localStorage");
+    supabaseLogger("Supabase data loaded into localStorage");
 
     _syncing = false;
     return true;

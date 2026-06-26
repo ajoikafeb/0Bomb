@@ -63,11 +63,25 @@ CREATE TABLE admin_config (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_wallet TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'info',
+  title TEXT NOT NULL,
+  body TEXT DEFAULT '',
+  data JSONB DEFAULT '{}',
+  read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE legacies (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   hero_id UUID REFERENCES heroes(id),
+  owner_wallet TEXT,
   tier TEXT NOT NULL,
   transferred_to UUID REFERENCES heroes(id),
+  from_hero_name TEXT DEFAULT '',
+  to_hero_name TEXT DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

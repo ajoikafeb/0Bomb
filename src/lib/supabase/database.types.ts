@@ -1,6 +1,39 @@
 export interface Database {
   public: {
     Tables: {
+      notifications: {
+        Row: {
+          id: string;
+          owner_wallet: string;
+          type: string;
+          title: string;
+          body: string;
+          data: unknown;
+          read: boolean;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          owner_wallet: string;
+          type?: string;
+          title: string;
+          body?: string;
+          data?: unknown;
+          read?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          owner_wallet?: string;
+          type?: string;
+          title?: string;
+          body?: string;
+          data?: unknown;
+          read?: boolean;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       marketplace_listings: {
         Row: {
           id: string;
