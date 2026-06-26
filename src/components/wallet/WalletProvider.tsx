@@ -2,6 +2,7 @@
 
 import { createContext, useContext, ReactNode } from "react";
 import { useWallet } from "@/hooks/useWallet";
+import { useDataLoader } from "@/hooks/useDataLoader";
 
 interface WalletContextType {
   address: string | null;
@@ -27,6 +28,7 @@ const WalletContext = createContext<WalletContextType>({
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const wallet = useWallet();
+  useDataLoader(wallet.address, wallet.isConnected);
   return <WalletContext.Provider value={wallet}>{children}</WalletContext.Provider>;
 }
 

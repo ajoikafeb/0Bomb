@@ -128,7 +128,7 @@ interface GameSave {
   soulboundItemIds?: string[];
 }
 
-function loadSave(): GameSave {
+export function loadSave(): GameSave {
   if (typeof window === "undefined") return { heroes: [], inventory: [], cosmetics: [], listings: [], energyPotions: 0, activeMap: null, nextId: 1, adminConfig: { ...DEFAULT_ADMIN_CONFIG }, inbox: [], transactions: [], username: "", tokenBalance: 0, bannedAddresses: [], frozenAddresses: [], itemBlacklist: [], auditLog: [], tokenBalances: {}, usernames: {}, potionCounts: {}, fragments: {}, withdrawalRequests: [], faucetClaims: {}, voucherUsage: {}, soulboundItemIds: [] };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -233,7 +233,7 @@ function loadSave(): GameSave {
   return { heroes: [], inventory: [], cosmetics: [], listings: [], energyPotions: 0, activeMap: null, nextId: 1, adminConfig: { ...DEFAULT_ADMIN_CONFIG }, inbox: [], transactions: [], username: "", tokenBalance: 0, bannedAddresses: [], frozenAddresses: [], itemBlacklist: [], auditLog: [], tokenBalances: {}, usernames: {}, potionCounts: {}, faucetClaims: {}, voucherUsage: {}, soulboundItemIds: [] };
 }
 
-function saveState(save: GameSave) {
+export function saveState(save: GameSave) {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(save));
   if (isSyncEnabled()) {
