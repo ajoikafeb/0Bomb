@@ -25,7 +25,7 @@ export async function fetchActiveListings(): Promise<MarketplaceListing[]> {
 
 export async function createListingRemote(listing: MarketplaceListing): Promise<boolean> {
   if (!isConnected()) return false;
-  const { error } = await db().from("marketplace_listings").insert([listing]);
+  const { error } = await db().from("marketplace_listings").insert([listing as never]);
   if (error) {
     console.warn("Supabase createListing error:", error.message);
     return false;
@@ -37,7 +37,7 @@ export async function updateListingStatus(listingId: string, status: "cancelled"
   if (!isConnected()) return false;
   const { error } = await db()
     .from("marketplace_listings")
-    .update({ status })
+    .update({ status } as never)
     .eq("id", listingId);
   if (error) {
     console.warn("Supabase updateListingStatus error:", error.message);
