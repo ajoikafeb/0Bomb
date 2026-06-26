@@ -1,12 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { getAdminConfig, updateAdminConfig, getTokenBalance } from "@/lib/game/GameStateManager";
+import { isSyncEnabled } from "@/lib/supabase/sync";
 import { GlassCard, StatCard } from "@/components/admin/StatCard";
 
 export default function AdminEconomy() {
   const cfg = getAdminConfig();
   const [localCfg, setLocalCfg] = useState(cfg);
+  const [remoteSupply, setRemoteSupply] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isSyncEnabled()) {
+      import("@/lib/supabase/client").then(({ getSupabase }) => {
+        getSupabase().from("profiles").select("spout_balance").then(({ data }) => {
+          if (data) {
+            const total = data.reduce((s, p) => s + Number(p.spout_balance || 0), 0);
+            setRemoteSupply(total);
+          }
+        });
+      });
+    }
+  }, []);
 
   const saveCfg = (partial: Partial<typeof cfg>) => {
     const updated = { ...localCfg, ...partial };
@@ -27,10 +42,13 @@ export default function AdminEconomy() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Economy Panel</h1>
+      <div className="flex items-center gap-2">
+        <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Economy Panel</h1>
+        {remoteSupply !== null && <span className="text-[9px] text-cyan-500">● live</span>}
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="$0BOMB Supply" value={getTokenBalance().toLocaleString()} color="cyan" icon="🪙" />
+        <StatCard label="$0BOMB Supply" value={(remoteSupply ?? getTokenBalance()).toLocaleString()} color="cyan" icon="🪙" />
         <StatCard label="Reward Multiplier" value={`${localCfg.rewardMultiplier}x`} color="green" icon="📈" />
         <StatCard label="Marketplace Fee" value={`${(localCfg.marketplaceFee * 100).toFixed(1)}%`} color="pink" icon="🏪" />
         <StatCard label="Event Multiplier" value={`${localCfg.eventRewardMultiplier}x`} color="purple" icon="🎉" />

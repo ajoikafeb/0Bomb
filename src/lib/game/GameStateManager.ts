@@ -1320,8 +1320,10 @@ export function getPlayerBalance(address: string | null): number {
   const save = loadSave();
   const addr = address.toLowerCase();
   const balances = save.tokenBalances || {};
-  if (balances[addr]) return balances[addr];
-  return save.tokenBalance || 0;
+  if (balances[addr] !== undefined) return balances[addr];
+  if (addr === "_legacy" && save.tokenBalance) return save.tokenBalance;
+  if (Object.keys(balances).length <= 1) return save.tokenBalance || 0;
+  return 0;
 }
 
 export function setPlayerBalance(address: string | null, amount: number) {
@@ -1540,7 +1542,12 @@ export function adminAddHero(address: string) {
 }
 
 export function getTokenBalance(): number {
-  return loadSave().tokenBalance;
+  const save = loadSave();
+  // Sum all per-wallet balances if available
+  if (save.tokenBalances && Object.keys(save.tokenBalances).length > 0) {
+    return Object.values(save.tokenBalances).reduce((s, v) => s + (v || 0), 0);
+  }
+  return save.tokenBalance || 0;
 }
 
 export function adminSendToken(amount: number, targetAddress?: string) {

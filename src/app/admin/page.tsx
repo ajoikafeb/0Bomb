@@ -1,7 +1,8 @@
 "use client";
 
-import { useAdminData, useRealtimeStats } from "@/lib/admin/useAdminData";
+import { useAdminRealtimeStats } from "@/lib/admin/useAdminRealtime";
 import { getAdminConfig, updateAdminConfig } from "@/lib/game/GameStateManager";
+import { isSyncEnabled } from "@/lib/supabase/sync";
 import { StatCard, GlassCard, Badge } from "@/components/admin/StatCard";
 
 function EmergencyBanner() {
@@ -42,16 +43,35 @@ function QuickActions() {
 }
 
 export default function AdminOverview() {
-  const { aliveHeroes, totalHeroes, totalPlayers, totalMinted, avgLevel, marketplaceVolume, activeListings, cfg } = useAdminData();
-  const stats = useRealtimeStats();
+  const { totalHeroes, aliveHeroes, totalPlayers, totalItems, activeListings, marketplaceVolume, avgLevel, totalMinted, loading, error, cfg } = useAdminRealtimeStats();
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Admin Overview</h1>
+          <Badge color="cyan">Developer Mode</Badge>
+        </div>
+        <QuickActions />
+        <div className="text-center py-12 text-gray-500 text-xs animate-pulse">Loading stats from database...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
         <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Admin Overview</h1>
         <Badge color="cyan">Developer Mode</Badge>
-        <Badge color={cfg.globalMaintenance ? "red" : "green"}>{cfg.globalMaintenance ? "Maintenance ON" : "Live"}</Badge>
+        <Badge color={cfg?.globalMaintenance ? "red" : "green"}>{cfg?.globalMaintenance ? "Maintenance ON" : "Live"}</Badge>
+        <Badge color={isSyncEnabled?.() ? "green" : "gray"}>{isSyncEnabled?.() ? "DB Online" : "DB Offline"}</Badge>
       </div>
+
+      {error && (
+        <div className="px-3 py-2 bg-red-600/10 border border-red-500/20 rounded-lg text-xs text-red-400">
+          ⚠ {error}
+        </div>
+      )}
 
       <EmergencyBanner />
       <QuickActions />
@@ -60,20 +80,19 @@ export default function AdminOverview() {
         <StatCard label="Heroes Alive" value={aliveHeroes} color="cyan" icon="👤" />
         <StatCard label="Total Heroes" value={totalHeroes} color="blue" icon="👥" />
         <StatCard label="Players" value={totalPlayers} color="green" icon="🎮" />
-        <StatCard label="Items Minted" value={totalMinted} color="purple" icon="🖼️" />
+        <StatCard label="Total Assets" value={totalMinted} color="purple" icon="🖼️" />
         <StatCard label="Avg Hero Level" value={avgLevel.toFixed(1)} color="yellow" icon="📊" />
-        <StatCard label="Total Items" value={stats.items} color="red" icon="⚔️" />
-        <StatCard label="Total Supply" value={stats.supply} color="orange" icon="💎" suffix="$0BOMB" />
+        <StatCard label="Total Items" value={totalItems} color="red" icon="⚔️" />
+        <StatCard label="Active Listings" value={activeListings} color="cyan" icon="📋" />
         <StatCard label="Marketplace Vol" value={marketplaceVolume.toFixed(2)} color="pink" icon="🏪" suffix="$0BOMB" />
-        <StatCard label="Active Listings" value={activeListings.length} color="cyan" icon="📋" />
-        <StatCard label="Reward Multiplier" value={`${cfg.rewardMultiplier}x`} color="green" icon="💰" />
+        <StatCard label="Reward Multiplier" value={`${cfg?.rewardMultiplier ?? 1}x`} color="green" icon="💰" />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="Online" value={stats.online} color="green" icon="🟢" />
-        <StatCard label="Wallets" value={stats.wallets} color="cyan" icon="👛" />
-        <StatCard label="Battles" value={stats.battles} color="orange" icon="⚔️" />
-        <StatCard label="Fragments Supply" value={stats.fragments} color="purple" icon="💠" />
+        <StatCard label="Online" value={aliveHeroes} color="green" icon="🟢" />
+        <StatCard label="Wallets" value={totalPlayers} color="cyan" icon="👛" />
+        <StatCard label="Active Battles" value="0" color="orange" icon="⚔️" />
+        <StatCard label="Fragments Supply" value="?" color="purple" icon="💠" />
       </div>
 
       <GlassCard title="Quick Config Toggles">
