@@ -1,6 +1,4 @@
 let audioCtx: AudioContext | null = null;
-let masterGain: GainNode | null = null;
-let reverbNode: ConvolverNode | null = null;
 
 function ctx(): AudioContext {
   if (!audioCtx) audioCtx = new AudioContext();
@@ -8,43 +6,274 @@ function ctx(): AudioContext {
   return audioCtx;
 }
 
-let musicEnabled = true;
-let sfxEnabled = true;
-let seqInterval: ReturnType<typeof setInterval> | null = null;
-let stepIndex = 0;
+// ─── Volume settings (persisted to localStorage) ─────────────
+const STORAGE_KEY = "0gbomber_audio_settings";
 
-export function setMusicEnabled(v: boolean) {
-  musicEnabled = v;
-  if (!v) stopMusic();
-  else if (musicEnabled) startMusic();
+interface AudioSettings {
+  master: number;
+  music: number;
+  sfx: number;
+  ui: number;
+  musicMuted: boolean;
+  sfxMuted: boolean;
 }
-export function setSfxEnabled(v: boolean) { sfxEnabled = v; }
-export function isMusicEnabled() { return musicEnabled; }
-export function isSfxEnabled() { return sfxEnabled; }
 
-// === Music sequencer — extended space theme ===
+function loadSettings(): AudioSettings {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return { ...defaultSettings, ...JSON.parse(raw) };
+  } catch {}
+  return { ...defaultSettings };
+}
+
+function saveSettings(s: AudioSettings) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {}
+}
+
+const defaultSettings: AudioSettings = {
+  master: 0.35,
+  music: 0.8,
+  sfx: 1.0,
+  ui: 1.0,
+  musicMuted: false,
+  sfxMuted: false,
+};
+
+let settings = loadSettings();
+
+// ─── Master gain node ──────────────────────────────────────
+let masterGain: GainNode | null = null;
+let musicGain: GainNode | null = null;
+let sfxGain: GainNode | null = null;
+let uiGain: GainNode | null = null;
+
+function ensureMaster() {
+  const c = ctx();
+  if (!masterGain) {
+    masterGain = c.createGain();
+    masterGain.gain.setValueAtTime(settings.master, c.currentTime);
+    masterGain.connect(c.destination);
+
+    musicGain = c.createGain();
+    musicGain.gain.setValueAtTime(settings.music, c.currentTime);
+    musicGain.connect(masterGain);
+
+    sfxGain = c.createGain();
+    sfxGain.gain.setValueAtTime(settings.sfx, c.currentTime);
+    sfxGain.connect(masterGain);
+
+    uiGain = c.createGain();
+    uiGain.gain.setValueAtTime(settings.ui, c.currentTime);
+    uiGain.connect(masterGain);
+  }
+  return c;
+}
+
+// ─── Audio pools (pre-generated noise buffers) ─────────────
+let _noiseBuffer128: AudioBuffer | null = null;
+let _noiseBuffer300: AudioBuffer | null = null;
+let _noiseBuffer400: AudioBuffer | null = null;
+let _clickBuffer: AudioBuffer | null = null;
+
+function getNoiseBuffer(durMs: number): AudioBuffer {
+  const c = ctx();
+  const len = Math.floor(c.sampleRate * durMs / 1000);
+  let buf: AudioBuffer | null = null;
+  if (durMs === 128) { if (!_noiseBuffer128) { _noiseBuffer128 = c.createBuffer(1, len, c.sampleRate); const d = _noiseBuffer128.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1; } buf = _noiseBuffer128; }
+  else if (durMs === 300) { if (!_noiseBuffer300) { _noiseBuffer300 = c.createBuffer(1, len, c.sampleRate); const d = _noiseBuffer300.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1; } buf = _noiseBuffer300; }
+  else if (durMs === 400) { if (!_noiseBuffer400) { _noiseBuffer400 = c.createBuffer(1, len, c.sampleRate); const d = _noiseBuffer400.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1; } buf = _noiseBuffer400; }
+  if (!buf) { buf = c.createBuffer(1, len, c.sampleRate); const d = buf.getChannelData(0); for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1; }
+  return buf;
+}
+
+function getClickBuffer(): AudioBuffer {
+  if (!_clickBuffer) {
+    const c = ctx();
+    const len = Math.floor(c.sampleRate * 0.02);
+    _clickBuffer = c.createBuffer(1, len, c.sampleRate);
+    const d = _clickBuffer.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const t = i / c.sampleRate;
+      d[i] = Math.sin(2 * Math.PI * 800 * t) * Math.exp(-t * 80) * (Math.random() * 0.3 + 0.7);
+    }
+  }
+  return _clickBuffer;
+}
+
+// ─── Volume API ─────────────────────────────────────────────
+export function setMasterVolume(v: number) { settings.master = Math.max(0, Math.min(1, v)); if (masterGain) masterGain.gain.setValueAtTime(settings.master, ctx().currentTime); saveSettings(settings); }
+export function setMusicVolume(v: number) { settings.music = Math.max(0, Math.min(1, v)); if (musicGain) musicGain.gain.setValueAtTime(settings.music, ctx().currentTime); saveSettings(settings); }
+export function setSfxVolume(v: number) { settings.sfx = Math.max(0, Math.min(1, v)); if (sfxGain) sfxGain.gain.setValueAtTime(settings.sfx, ctx().currentTime); saveSettings(settings); }
+export function setUiVolume(v: number) { settings.ui = Math.max(0, Math.min(1, v)); if (uiGain) uiGain.gain.setValueAtTime(settings.ui, ctx().currentTime); saveSettings(settings); }
+export function setMusicEnabled(v: boolean) { settings.musicMuted = !v; if (!v) stopMusic(); else if (!seqRunning) startMusic(); saveSettings(settings); }
+export function setSfxEnabled(v: boolean) { settings.sfxMuted = !v; saveSettings(settings); }
+export function isMusicEnabled() { return !settings.musicMuted; }
+export function isSfxEnabled() { return !settings.sfxMuted; }
+export function getMasterVolume() { return settings.master; }
+export function getMusicVolume() { return settings.music; }
+export function getSfxVolume() { return settings.sfx; }
+export function getUiVolume() { return settings.ui; }
+
+// ─── SFX helpers ────────────────────────────────────────────
+function sfxNoise(durMs: number, vol: number, lowpass: number) {
+  if (settings.sfxMuted) return;
+  const c = ensureMaster();
+  if (!sfxGain) return;
+  const buf = getNoiseBuffer(durMs);
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  const filter = c.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(lowpass, c.currentTime);
+  const gain = c.createGain();
+  gain.gain.setValueAtTime(vol, c.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + durMs / 1000);
+  src.connect(filter).connect(gain).connect(sfxGain);
+  src.start(c.currentTime);
+  src.stop(c.currentTime + durMs / 1000 + 0.05);
+}
+
+function sfxTone(freq: number, durMs: number, vol: number, type: OscillatorType = "square") {
+  if (settings.sfxMuted) return;
+  const c = ensureMaster();
+  if (!sfxGain) return;
+  const osc = c.createOscillator();
+  const gain = c.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, c.currentTime);
+  gain.gain.setValueAtTime(vol, c.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + durMs / 1000);
+  osc.connect(gain).connect(sfxGain);
+  osc.start(c.currentTime);
+  osc.stop(c.currentTime + durMs / 1000 + 0.05);
+}
+
+function sfxNoiseTone(noiseDur: number, noiseVol: number, lowpass: number, toneFreq: number, toneDur: number, toneVol: number, toneType: OscillatorType = "square") {
+  sfxNoise(noiseDur, noiseVol, lowpass);
+  sfxTone(toneFreq, toneDur, toneVol, toneType);
+}
+
+function uiTone(freq: number, durMs: number, vol: number, type: OscillatorType = "sine") {
+  if (settings.sfxMuted) return;
+  const c = ensureMaster();
+  if (!uiGain) return;
+  const osc = c.createOscillator();
+  const gain = c.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, c.currentTime);
+  gain.gain.setValueAtTime(vol, c.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + durMs / 1000);
+  osc.connect(gain).connect(uiGain);
+  osc.start(c.currentTime);
+  osc.stop(c.currentTime + durMs / 1000 + 0.05);
+}
+
+// ─── Public SFX API ────────────────────────────────────────
+let _lastExplosion = 0;
+export function playExplosion() {
+  const now = Date.now();
+  if (now - _lastExplosion < 80) return;
+  _lastExplosion = now;
+  sfxNoiseTone(300, 0.15, 800, 60, 300, 0.1, "sawtooth");
+}
+
+let _lastBombPlace = 0;
+export function playBombPlace() {
+  const now = Date.now();
+  if (now - _lastBombPlace < 120) return;
+  _lastBombPlace = now;
+  sfxTone(520, 60, 0.05, "square");
+  setTimeout(() => sfxTone(440, 40, 0.04, "square"), 40);
+}
+
+export function playKill() {
+  sfxTone(880, 80, 0.07, "square");
+  setTimeout(() => sfxTone(1100, 100, 0.05, "triangle"), 60);
+}
+
+export function playLootPickup() {
+  sfxTone(1047, 50, 0.05, "triangle");
+  setTimeout(() => sfxTone(1319, 60, 0.04, "triangle"), 50);
+}
+
+export function playRareLoot() {
+  [1047, 1319, 1568, 2093].forEach((f, i) => setTimeout(() => sfxTone(f, 100, 0.06, "triangle"), i * 80));
+}
+
+export function playLegendaryLoot() {
+  [784, 988, 1175, 1568, 1976, 2350].forEach((f, i) => setTimeout(() => sfxTone(f, 120, 0.07, "sine"), i * 70));
+}
+
+export function playVictory() {
+  [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => setTimeout(() => sfxTone(f, 180, 0.08, "triangle"), i * 120));
+}
+
+export function playDefeat() {
+  [400, 350, 300, 200].forEach((f, i) => setTimeout(() => sfxTone(f, 200, 0.07, "sawtooth"), i * 180));
+}
+
+export function playHeroDeath() {
+  sfxNoiseTone(400, 0.12, 400, 200, 250, 0.08, "sawtooth");
+  setTimeout(() => sfxTone(120, 300, 0.05, "sawtooth"), 150);
+}
+
+export function playHeroLevelUp() {
+  [600, 800, 1000, 1200].forEach((f, i) => setTimeout(() => sfxTone(f, 100, 0.06, "triangle"), i * 60));
+}
+
+export function playFootstep() {
+  sfxNoise(30, 0.02, 400);
+}
+
+export function playPortal() {
+  sfxTone(200, 200, 0.06, "sawtooth");
+  setTimeout(() => sfxTone(300, 150, 0.05, "triangle"), 100);
+  setTimeout(() => sfxTone(400, 100, 0.04, "sine"), 200);
+}
+
+export function playAlien() {
+  sfxTone(200, 100, 0.05, "square");
+  setTimeout(() => sfxTone(150, 150, 0.04, "square"), 80);
+}
+
+export function playEquipItem() {
+  sfxTone(600, 50, 0.04, "sine");
+  setTimeout(() => sfxTone(900, 60, 0.03, "triangle"), 40);
+}
+
+// ─── Public UI API ───────────────────────────────────────────
+export function playUIClick() {
+  uiTone(600, 30, 0.04, "sine");
+}
+
+export function playUIHover() {
+  uiTone(400, 20, 0.02, "sine");
+}
+
+export function playUINotification() {
+  [800, 1000].forEach((f, i) => setTimeout(() => uiTone(f, 60, 0.05, "triangle"), i * 80));
+}
+
+export function playUIWalletConnect() {
+  [400, 500, 600, 800].forEach((f, i) => setTimeout(() => uiTone(f, 80, 0.05, "sine"), i * 60));
+}
+
+// ─── Music System ────────────────────────────────────────────
+let seqInterval: ReturnType<typeof setInterval> | null = null;
+let seqStep = 0;
+let seqRunning = false;
+let currentTrack: "landing" | "lobby" | "battle" | "boss" | "victory" | "defeat" = "lobby";
+
 const BPM = 145;
-const STEP = 60000 / BPM / 4; // 16th note ~103ms
-const STEPS = 128; // ~13s loop
+const STEP_MS = 60000 / BPM / 4;
+const STEPS = 128;
 
-// Bass line — 32 quarter notes (8 measures)
+// Bass line
 const BASS_NOTES = [
-  // m1: Cm
-  65.41, 65.41, 98.00, 98.00,
-  // m2: Ab - G
-  103.83, 103.83, 98.00, 98.00,
-  // m3: Fm - C
-  87.31, 87.31, 65.41, 65.41,
-  // m4: G - G (build)
-  98.00, 98.00, 98.00, 98.00,
-  // m5: Cm
-  65.41, 65.41, 98.00, 98.00,
-  // m6: Bb - Ab (sequence)
-  116.54, 116.54, 103.83, 103.83,
-  // m7: Fm - C
-  87.31, 87.31, 65.41, 65.41,
-  // m8: G - C (resolve)
-  98.00, 98.00, 65.41, 65.41,
+  65.41, 65.41, 98.00, 98.00, 103.83, 103.83, 98.00, 98.00,
+  87.31, 87.31, 65.41, 65.41, 98.00, 98.00, 98.00, 98.00,
+  65.41, 65.41, 98.00, 98.00, 116.54, 116.54, 103.83, 103.83,
+  87.31, 87.31, 65.41, 65.41, 98.00, 98.00, 65.41, 65.41,
 ];
 
 const BASS_ACCENTS = [
@@ -54,75 +283,36 @@ const BASS_ACCENTS = [
   false, true, false, true, false, true, false, true,
 ];
 
-// Pad chords — 16 half-note changes
 const PAD_CHORDS: [number, number, number][] = [
-  [130.81, 155.56, 196.00], // Cm
-  [207.65, 261.63, 311.13], // Ab
-  [174.61, 207.65, 261.63], // Fm
-  [196.00, 246.94, 293.66], // G
-  [130.81, 155.56, 196.00], // Cm
-  [233.08, 293.66, 349.23], // Bb
-  [207.65, 261.63, 311.13], // Ab
-  [196.00, 246.94, 293.66], // G
-  [174.61, 207.65, 261.63], // Fm
-  [130.81, 155.56, 196.00], // Cm
-  [196.00, 246.94, 293.66], // G
-  [207.65, 261.63, 311.13], // Ab
-  [174.61, 207.65, 261.63], // Fm
-  [233.08, 293.66, 349.23], // Bb
-  [196.00, 246.94, 293.66], // G
-  [130.81, 155.56, 196.00], // Cm
+  [130.81, 155.56, 196.00], [207.65, 261.63, 311.13],
+  [174.61, 207.65, 261.63], [196.00, 246.94, 293.66],
+  [130.81, 155.56, 196.00], [233.08, 293.66, 349.23],
+  [207.65, 261.63, 311.13], [196.00, 246.94, 293.66],
+  [174.61, 207.65, 261.63], [130.81, 155.56, 196.00],
+  [196.00, 246.94, 293.66], [207.65, 261.63, 311.13],
+  [174.61, 207.65, 261.63], [233.08, 293.66, 349.23],
+  [196.00, 246.94, 293.66], [130.81, 155.56, 196.00],
 ];
 
-// Arpeggio — 128 notes per pattern
 const ARP_NOTES = [
-  // Phrase 1 (Cm-Ab-Fm-G)
   523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25, 415.30,
   622.25, 783.99, 932.33, 1244.51, 932.33, 783.99, 622.25, 523.25,
   659.25, 783.99, 1046.50, 1318.51, 1046.50, 783.99, 659.25, 523.25,
   587.33, 739.99, 880.00, 1174.66, 880.00, 739.99, 587.33, 493.88,
-  // Phrase 2 (Cm-Bb-Ab-G)
   523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25, 415.30,
   622.25, 739.99, 880.00, 1174.66, 880.00, 739.99, 622.25, 523.25,
   698.46, 880.00, 1046.50, 1396.91, 1046.50, 880.00, 698.46, 622.25,
   659.25, 783.99, 932.33, 1244.51, 932.33, 783.99, 659.25, 523.25,
-  // Phrase 3 (Fm-Cm-G-Ab) — higher register
   698.46, 880.00, 1046.50, 1396.91, 1046.50, 880.00, 698.46, 622.25,
   783.99, 932.33, 1174.66, 1567.98, 1174.66, 932.33, 783.99, 659.25,
   659.25, 783.99, 1046.50, 1318.51, 1046.50, 783.99, 659.25, 523.25,
   698.46, 880.00, 1046.50, 1396.91, 1046.50, 880.00, 698.46, 622.25,
-  // Phrase 4 (Fm-Bb-G-Cm) — climax
   587.33, 739.99, 880.00, 1174.66, 880.00, 739.99, 587.33, 493.88,
   659.25, 783.99, 1046.50, 1318.51, 1046.50, 783.99, 659.25, 523.25,
   783.99, 932.33, 1174.66, 1567.98, 1174.66, 932.33, 783.99, 659.25,
   523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25, 415.30,
 ];
 
-// Alternate arpeggio — more syncopated
-const ARP_NOTES2 = [
-  // Phrase 1
-  523.25, 415.30, 523.25, 659.25, 783.99, 659.25, 523.25, 415.30,
-  622.25, 523.25, 622.25, 783.99, 932.33, 783.99, 622.25, 523.25,
-  659.25, 523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25,
-  587.33, 493.88, 587.33, 739.99, 880.00, 739.99, 587.33, 493.88,
-  // Phrase 2
-  523.25, 415.30, 523.25, 659.25, 783.99, 659.25, 523.25, 415.30,
-  622.25, 523.25, 622.25, 783.99, 932.33, 783.99, 622.25, 523.25,
-  698.46, 622.25, 698.46, 880.00, 1046.50, 880.00, 698.46, 622.25,
-  659.25, 523.25, 659.25, 783.99, 932.33, 783.99, 659.25, 523.25,
-  // Phrase 3
-  698.46, 622.25, 698.46, 880.00, 1046.50, 880.00, 698.46, 622.25,
-  783.99, 659.25, 783.99, 932.33, 1174.66, 932.33, 783.99, 659.25,
-  659.25, 523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25,
-  698.46, 622.25, 698.46, 880.00, 1046.50, 880.00, 698.46, 622.25,
-  // Phrase 4
-  587.33, 493.88, 587.33, 739.99, 880.00, 739.99, 587.33, 493.88,
-  659.25, 523.25, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25,
-  783.99, 659.25, 783.99, 932.33, 1174.66, 932.33, 783.99, 659.25,
-  523.25, 415.30, 523.25, 659.25, 783.99, 659.25, 523.25, 415.30,
-];
-
-// Lead melody — 16 notes (one per half note)
 const LEAD_NOTES = [
   -1, 783.99, 659.25, 783.99, 1046.50, 783.99, 659.25, 523.25,
   659.25, 523.25, 415.30, 523.25, 659.25, 783.99, 659.25, 523.25,
@@ -130,11 +320,17 @@ const LEAD_NOTES = [
   1046.50, 783.99, 659.25, 783.99, 1046.50, 1174.66, 1046.50, 783.99,
 ];
 
-// --- Voice helpers ---
+// Boss track — darker, heavier bass
+const BOSS_BASS_NOTES = [
+  55.00, 55.00, 73.42, 73.42, 65.41, 65.41, 55.00, 55.00,
+  49.00, 49.00, 65.41, 65.41, 73.42, 73.42, 65.41, 65.41,
+  55.00, 55.00, 73.42, 73.42, 65.41, 65.41, 55.00, 55.00,
+  49.00, 49.00, 65.41, 65.41, 58.27, 58.27, 55.00, 55.00,
+];
 
 function kick(vol: number) {
-  const c = ctx();
-  if (!masterGain) return;
+  const c = ensureMaster();
+  if (!musicGain) return;
   const osc = c.createOscillator();
   const gain = c.createGain();
   osc.type = "sine";
@@ -142,20 +338,15 @@ function kick(vol: number) {
   osc.frequency.exponentialRampToValueAtTime(40, c.currentTime + 0.12);
   gain.gain.setValueAtTime(vol, c.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.15);
-  const dist = c.createWaveShaper();
-  const k = 3;
-  dist.curve = new Float32Array([-1, -1 + 2 / (k + 1), 1]);
-  osc.connect(gain).connect(masterGain);
+  osc.connect(gain).connect(musicGain);
   osc.start(c.currentTime);
   osc.stop(c.currentTime + 0.15);
 }
 
 function snare(vol: number) {
-  const c = ctx();
-  if (!masterGain) return;
-  const buf = c.createBuffer(1, c.sampleRate * 0.12, c.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const c = ensureMaster();
+  if (!musicGain) return;
+  const buf = getNoiseBuffer(120);
   const src = c.createBufferSource();
   src.buffer = buf;
   const filter = c.createBiquadFilter();
@@ -165,16 +356,14 @@ function snare(vol: number) {
   const gain = c.createGain();
   gain.gain.setValueAtTime(vol, c.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.1);
-  src.connect(filter).connect(gain).connect(masterGain);
+  src.connect(filter).connect(gain).connect(musicGain);
   src.start(c.currentTime);
 }
 
 function hihat(vol: number) {
-  const c = ctx();
-  if (!masterGain) return;
-  const buf = c.createBuffer(1, c.sampleRate * 0.04, c.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const c = ensureMaster();
+  if (!musicGain) return;
+  const buf = getNoiseBuffer(40);
   const src = c.createBufferSource();
   src.buffer = buf;
   const filter = c.createBiquadFilter();
@@ -183,13 +372,13 @@ function hihat(vol: number) {
   const gain = c.createGain();
   gain.gain.setValueAtTime(vol, c.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.03);
-  src.connect(filter).connect(gain).connect(masterGain);
+  src.connect(filter).connect(gain).connect(musicGain);
   src.start(c.currentTime);
 }
 
 function playBass(freq: number, accent: boolean) {
-  const c = ctx();
-  if (!masterGain) return;
+  const c = ensureMaster();
+  if (!musicGain) return;
   const osc = c.createOscillator();
   const gain = c.createGain();
   osc.type = "sawtooth";
@@ -201,24 +390,23 @@ function playBass(freq: number, accent: boolean) {
   filter.type = "lowpass";
   filter.frequency.setValueAtTime(600, c.currentTime);
   filter.frequency.setValueAtTime(300, c.currentTime + 0.15);
-  osc.connect(filter).connect(gain).connect(masterGain);
+  osc.connect(filter).connect(gain).connect(musicGain);
   osc.start(c.currentTime);
   osc.stop(c.currentTime + 0.25);
-  // Sub oscillator
   const sub = c.createOscillator();
   const subG = c.createGain();
   sub.type = "sine";
   sub.frequency.setValueAtTime(freq / 2, c.currentTime);
   subG.gain.setValueAtTime(vol * 0.5, c.currentTime);
   subG.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.2);
-  sub.connect(subG).connect(masterGain);
+  sub.connect(subG).connect(musicGain);
   sub.start(c.currentTime);
   sub.stop(c.currentTime + 0.22);
 }
 
 function playPad(notes: [number, number, number]) {
-  const c = ctx();
-  if (!masterGain) return;
+  const c = ensureMaster();
+  if (!musicGain) return;
   for (let i = 0; i < 2; i++) {
     const detune = i === 0 ? -5 : 5;
     for (const freq of notes) {
@@ -231,7 +419,7 @@ function playPad(notes: [number, number, number]) {
       gain.gain.linearRampToValueAtTime(0.04, c.currentTime + 0.3);
       gain.gain.linearRampToValueAtTime(0.02, c.currentTime + 1.5);
       gain.gain.linearRampToValueAtTime(0.001, c.currentTime + 1.8);
-      osc.connect(gain).connect(masterGain);
+      osc.connect(gain).connect(musicGain);
       osc.start(c.currentTime);
       osc.stop(c.currentTime + 1.9);
     }
@@ -239,8 +427,8 @@ function playPad(notes: [number, number, number]) {
 }
 
 function playArp(freq: number) {
-  const c = ctx();
-  if (!masterGain) return;
+  const c = ensureMaster();
+  if (!musicGain) return;
   const osc = c.createOscillator();
   const gain = c.createGain();
   osc.type = "square";
@@ -250,36 +438,33 @@ function playArp(freq: number) {
   const filter = c.createBiquadFilter();
   filter.type = "lowpass";
   filter.frequency.setValueAtTime(3000, c.currentTime);
-  osc.connect(filter).connect(gain).connect(masterGain);
+  osc.connect(filter).connect(gain).connect(musicGain);
   osc.start(c.currentTime);
   osc.stop(c.currentTime + 0.08);
 }
 
 function playLead(freq: number) {
   if (freq < 0) return;
-  const c = ctx();
-  if (!masterGain) return;
+  const c = ensureMaster();
+  if (!musicGain) return;
   const osc = c.createOscillator();
   const gain = c.createGain();
   osc.type = "triangle";
   osc.frequency.setValueAtTime(freq, c.currentTime);
-  // Quick pitch bend for character
   osc.frequency.setValueAtTime(freq * 1.02, c.currentTime + 0.02);
   osc.frequency.setValueAtTime(freq, c.currentTime + 0.05);
   gain.gain.setValueAtTime(0.07, c.currentTime);
   gain.gain.setValueAtTime(0.04, c.currentTime + 0.3);
   gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.45);
-  osc.connect(gain).connect(masterGain);
+  osc.connect(gain).connect(musicGain);
   osc.start(c.currentTime);
   osc.stop(c.currentTime + 0.5);
 }
 
 function crash(vol: number) {
-  const c = ctx();
-  if (!masterGain) return;
-  const buf = c.createBuffer(1, c.sampleRate * 0.4, c.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const c = ensureMaster();
+  if (!musicGain) return;
+  const buf = getNoiseBuffer(400);
   const src = c.createBufferSource();
   src.buffer = buf;
   const filter = c.createBiquadFilter();
@@ -289,16 +474,14 @@ function crash(vol: number) {
   const gain = c.createGain();
   gain.gain.setValueAtTime(vol, c.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.35);
-  src.connect(filter).connect(gain).connect(masterGain);
+  src.connect(filter).connect(gain).connect(musicGain);
   src.start(c.currentTime);
 }
 
 function openhh(vol: number) {
-  const c = ctx();
-  if (!masterGain) return;
-  const buf = c.createBuffer(1, c.sampleRate * 0.15, c.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  const c = ensureMaster();
+  if (!musicGain) return;
+  const buf = getNoiseBuffer(150);
   const src = c.createBufferSource();
   src.buffer = buf;
   const filter = c.createBiquadFilter();
@@ -307,164 +490,119 @@ function openhh(vol: number) {
   const gain = c.createGain();
   gain.gain.setValueAtTime(vol, c.currentTime);
   gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.12);
-  src.connect(filter).connect(gain).connect(masterGain);
+  src.connect(filter).connect(gain).connect(musicGain);
   src.start(c.currentTime);
 }
 
-// --- Sequencer ---
+function playBossBass(freq: number) {
+  const c = ensureMaster();
+  if (!musicGain) return;
+  const osc = c.createOscillator();
+  const gain = c.createGain();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(freq, c.currentTime);
+  gain.gain.setValueAtTime(0.18, c.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.35);
+  const filter = c.createBiquadFilter();
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(400, c.currentTime);
+  osc.connect(filter).connect(gain).connect(musicGain);
+  osc.start(c.currentTime);
+  osc.stop(c.currentTime + 0.4);
+  const sub = c.createOscillator();
+  const subG = c.createGain();
+  sub.type = "sine";
+  sub.frequency.setValueAtTime(freq / 2, c.currentTime);
+  subG.gain.setValueAtTime(0.12, c.currentTime);
+  subG.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.3);
+  sub.connect(subG).connect(musicGain);
+  sub.start(c.currentTime);
+  sub.stop(c.currentTime + 0.35);
+}
 
-function tick() {
-  if (!musicEnabled) return;
-  const c = ctx();
-  if (!masterGain) {
-    masterGain = c.createGain();
-    masterGain.gain.setValueAtTime(0.35, c.currentTime);
-    masterGain.connect(c.destination);
-  }
+function musicTick() {
+  if (settings.musicMuted) return;
+  const c = ensureMaster();
+  if (!musicGain) return;
 
-  const s = stepIndex % STEPS;
-  const beatIdx = Math.floor(s / 4); // 0-31 (quarters)
+  const s = seqStep % STEPS;
+  const beatIdx = Math.floor(s / 4);
   const beatPhase = s % 4;
 
-  // Kick
+  const isBoss = currentTrack === "boss";
+
+  // Drums
   if (beatPhase === 0) {
-    if (beatIdx % 4 === 0) {
-      kick(0.18); // Downbeats: 0, 4, 8, 12, 16, 20, 24, 28
-    } else if (beatIdx % 4 === 2) {
-      kick(0.15); // 3rd beat: 2, 6, 10, 14, 18, 22, 26, 30
-    }
-    // Fills on 4th beat of even measures
-    if (beatIdx % 4 === 3 && (Math.floor(beatIdx / 4) % 2 === 0)) {
-      kick(0.12);
-    }
+    if (beatIdx % 4 === 0) kick(0.18);
+    else if (beatIdx % 4 === 2) kick(0.15);
+    if (beatIdx % 4 === 3 && (Math.floor(beatIdx / 4) % 2 === 0)) kick(0.12);
   }
-  // Extra kick on 16th offbeats in last measure
   if (beatPhase === 2 && beatIdx >= 28) kick(0.08);
-
-  // Snare: beats 2 and 4 (quarter positions 1, 3, 5, 7, ...)
-  if (beatPhase === 0) {
-    if (beatIdx % 4 === 1 || beatIdx % 4 === 3) snare(0.1);
-  }
-
-  // Hi-hat: every 8th note
-  if (s % 2 === 0) {
-    hl(beatPhase === 0 ? 0.035 : 0.025);
-  }
-
-  // Open hi-hat on offbeats of last 2 measures
+  if (beatPhase === 0 && (beatIdx % 4 === 1 || beatIdx % 4 === 3)) snare(0.1);
+  if (s % 2 === 0) hihat(beatPhase === 0 ? 0.035 : 0.025);
   if (s % 4 === 2 && beatIdx >= 24) openhh(0.03);
-
-  // Crash: section boundaries
   if (s === 0) crash(0.08);
   if (s === 64) crash(0.06);
 
-  // Bass: every quarter note
+  // Bass
   if (s % 4 === 0) {
-    const idx = beatIdx % BASS_NOTES.length;
-    playBass(BASS_NOTES[idx], BASS_ACCENTS[beatIdx] || false);
+    if (isBoss) {
+      const bi = beatIdx % BOSS_BASS_NOTES.length;
+      playBossBass(BOSS_BASS_NOTES[bi]);
+    } else {
+      const bi = beatIdx % BASS_NOTES.length;
+      playBass(BASS_NOTES[bi], BASS_ACCENTS[beatIdx] || false);
+    }
   }
 
-  // Pad: every 8 steps
+  // Pad - every 8 steps
   if (s % 8 === 0) {
-    const chordIdx = Math.floor(s / 8) % PAD_CHORDS.length;
-    playPad(PAD_CHORDS[chordIdx]);
+    const ci = Math.floor(s / 8) % PAD_CHORDS.length;
+    playPad(PAD_CHORDS[ci]);
   }
   if (s % 8 === 4) {
-    const chordIdx = (Math.floor(s / 8) + 2) % PAD_CHORDS.length;
-    playPad(PAD_CHORDS[chordIdx]);
+    const ci = (Math.floor(s / 8) + 2) % PAD_CHORDS.length;
+    playPad(PAD_CHORDS[ci]);
   }
 
-  // Arp: every step (alternate patterns every 64 steps)
-  const arpList = Math.floor(s / 64) % 2 === 0 ? ARP_NOTES : ARP_NOTES2;
-  if (s < arpList.length) playArp(arpList[s]);
+  // Arp
+  const arp = Math.floor(s / 64) % 2 === 0 ? ARP_NOTES : ARP_NOTES;
+  if (s < arp.length) playArp(arp[s]);
 
-  // Lead: every 8th step
-  const leadIdx = Math.floor(s / 8);
-  if (s % 8 === 0 && leadIdx < LEAD_NOTES.length) {
-    playLead(LEAD_NOTES[leadIdx]);
+  // Lead
+  if (!isBoss) {
+    const leadIdx = Math.floor(s / 8);
+    if (s % 8 === 0 && leadIdx < LEAD_NOTES.length) playLead(LEAD_NOTES[leadIdx]);
   }
 
-  stepIndex++;
+  seqStep++;
 }
 
-function hl(vol: number) {
-  hihat(vol);
+function getTrackBPM(): number {
+  if (currentTrack === "boss") return 120;
+  if (currentTrack === "victory") return 160;
+  if (currentTrack === "defeat") return 80;
+  return BPM;
 }
 
-export function startMusic() {
-  if (!musicEnabled) return;
+export function startMusic(track?: "landing" | "lobby" | "battle" | "boss" | "victory" | "defeat") {
+  if (settings.musicMuted) return;
   stopMusic();
-  stepIndex = 0;
-  const c = ctx();
-  masterGain = c.createGain();
-  masterGain.gain.setValueAtTime(0.35, c.currentTime);
-  masterGain.connect(c.destination);
-  tick();
-  seqInterval = setInterval(tick, STEP);
+  if (track) currentTrack = track;
+  seqStep = 0;
+  seqRunning = true;
+  ensureMaster();
+  musicTick();
+  const bpms = getTrackBPM();
+  const stepMs = 60000 / bpms / 4;
+  seqInterval = setInterval(musicTick, stepMs);
 }
 
 export function stopMusic() {
   if (seqInterval) { clearInterval(seqInterval); seqInterval = null; }
-  masterGain = null;
-  stepIndex = 0;
+  seqRunning = false;
+  seqStep = 0;
 }
 
-function sfxNoise(dur: number, vol: number, lowpass: number) {
-  if (!sfxEnabled) return;
-  const c = ctx();
-  const bufferSize = c.sampleRate * dur;
-  const buffer = c.createBuffer(1, bufferSize, c.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-  const src = c.createBufferSource();
-  src.buffer = buffer;
-  const filter = c.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.setValueAtTime(lowpass, c.currentTime);
-  const gain = c.createGain();
-  gain.gain.setValueAtTime(vol, c.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + dur);
-  src.connect(filter).connect(gain).connect(c.destination);
-  src.start(c.currentTime);
-}
-
-function sfxTone(freq: number, dur: number, vol: number, type: OscillatorType = "square") {
-  if (!sfxEnabled) return;
-  const c = ctx();
-  const osc = c.createOscillator();
-  const gain = c.createGain();
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, c.currentTime);
-  gain.gain.setValueAtTime(vol, c.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + dur);
-  osc.connect(gain).connect(c.destination);
-  osc.start(c.currentTime);
-  osc.stop(c.currentTime + dur);
-}
-
-export function playExplosion() {
-  sfxNoise(0.3, 0.15, 800);
-  sfxTone(80, 0.3, 0.12, "sawtooth");
-}
-
-export function playBombPlace() {
-  sfxTone(440, 0.08, 0.06, "square");
-}
-
-export function playKill() {
-  sfxTone(660, 0.1, 0.08);
-  setTimeout(() => sfxTone(880, 0.15, 0.06), 80);
-}
-
-export function playLootPickup() {
-  sfxTone(880, 0.06, 0.06);
-  setTimeout(() => sfxTone(1100, 0.08, 0.05), 60);
-}
-
-export function playVictory() {
-  [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => sfxTone(f, 0.2, 0.1, "triangle"), i * 150));
-}
-
-export function playDefeat() {
-  [400, 350, 300, 200].forEach((f, i) => setTimeout(() => sfxTone(f, 0.25, 0.08, "sawtooth"), i * 200));
-}
+export function isPlaying() { return seqRunning; }
+export function getCurrentTrack() { return currentTrack; }

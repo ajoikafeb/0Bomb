@@ -9,12 +9,13 @@ import { generateEquipment } from "@/lib/game/equipmentSystem";
 import { generateCosmetic } from "@/lib/game/cosmeticSystem";
 import { addHero, getHeroes, addMemory, addXP, addIntelligence, updateHero, getHero, calculateScoreRewards, consumeEnergy, triggerEnergyRegen, addEnergyPotions, getEnergyPotions, useEnergyPotion, getActiveMap, clearActiveMap, createNewActiveMap, saveActiveMap, addToInventory, addCosmetic, isEmergencyShutdown, getEffectiveMultipliers, addTransaction, addFragments, getFragments, isAddressFrozen, isAddressBanned, getPlayerBalance, addPlayerBalance, evolveAIStats, autoBuildTeam, toggleAutoDeploy, getEnergyCostForDifficulty, generateRewardChest, claimRewardChest, getVoucherRemaining, useVoucher, getVoucherUsage, markSoulbound, getEffectiveStats } from "@/lib/game/GameStateManager";
 import { createGameState, spawnHeroes, tickGame, getGameResult, TileType, calculateMapProgress, generateEnemies, type DropMultipliers } from "@/lib/game/AIDecisionEngine";
+import { processAIHeartbeat, getBehaviorLabel, getBehaviorColor } from "@/lib/game/HeroAISystem";
 import { DIFFICULTIES, DIFFICULTY_CONFIG, MAX_HEROES_PER_MAP, HERO_HATCH_COST, ENERGY_COST_BY_DIFFICULTY, CLEAR_TIME_BONUS_CONFIG, VOUCHER_MAX_HERO } from "@/lib/game/constants";
 import { payForHatch } from "@/lib/blockchain/provider";
 import { mintHero } from "@/lib/blockchain/heroNFTService";
 import type { Hero, MapProgression, RewardChest, RewardChestItem } from "@/lib/game/types";
 import type { GameState, EnemySim } from "@/lib/game/AIDecisionEngine";
-import { playExplosion, playBombPlace, playKill, playLootPickup, playVictory, playDefeat, startMusic, stopMusic, setMusicEnabled, setSfxEnabled, isMusicEnabled, isSfxEnabled } from "@/lib/audio/audioManager";
+import { playExplosion, playBombPlace, playKill, playLootPickup, playRareLoot, playLegendaryLoot, playVictory, playDefeat, playHeroDeath, playHeroLevelUp, playFootstep, playEquipItem, startMusic, stopMusic, setMusicEnabled, setSfxEnabled, isMusicEnabled, isSfxEnabled, playUIClick } from "@/lib/audio/audioManager";
 import BottomPanel from "@/components/game/BottomPanel";
 import { GameMap } from "@/components/game/GameMap";
 import { BattleHUD } from "@/components/game/BattleHUD";
@@ -465,11 +466,13 @@ export default function GamePage() {
     for (const hero of g.heroes) {
       const prev = prevLootRef.current[hero.id] || 0;
       if (hero.lootCollected > prev) {
-        playLootPickup();
         for (let i = 0; i < hero.lootCollected - prev; i++) {
           const eq = generateEquipment(undefined, hero.id);
           addToInventory(eq);
           addMemory(hero.id, "Found Equipment", `Found ${eq.name} (${eq.rarity})`);
+           if (eq.rarity === "Legendary") playLegendaryLoot();
+          else if (eq.rarity === "Epic" || eq.rarity === "Rare") playRareLoot();
+          else playLootPickup();
         }
       }
       prevLootRef.current[hero.id] = hero.lootCollected;
@@ -484,9 +487,18 @@ export default function GamePage() {
     const prevBombs: BombInfo[] = g.bombs.map(b => ({ x: b.x, y: b.y, range: b.range }));
     const gridBefore = g.grid.map(r => [...r]);
 
+    const heroHpBefore = new Map(g.heroes.filter(h => h.alive).map(h => [h.id, h.hp]));
+
     const updated = tickGame(g, TICK_INTERVAL);
+    processAIHeartbeat(updated);
     processCollectedLoot(updated);
     gameRef.current = updated;
+
+    for (const hero of updated.heroes) {
+      if (!hero.alive && heroHpBefore.get(hero.id) && heroHpBefore.get(hero.id)! > 0) {
+        playHeroDeath();
+      }
+    }
 
     const curBombKeys = new Set(updated.bombs.map(b => `${b.x},${b.y}`));
     const newExplosions: Explosion[] = [];

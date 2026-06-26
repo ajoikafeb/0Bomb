@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useWalletContext } from "@/components/wallet/WalletProvider";
-import { getHeroes, getInventory, getCosmetics, getActiveListings, getEnergyPotions, getPlayerUsername, setPlayerUsername, getPlayerBalance } from "@/lib/game/GameStateManager";
+import { useBalance } from "@/components/balance/BalanceProvider";
+import { getHeroes, getInventory, getCosmetics, getActiveListings, getPlayerUsername, setPlayerUsername } from "@/lib/game/GameStateManager";
 import { TOKEN_SYMBOL } from "@/lib/game/constants";
 import type { Hero } from "@/lib/game/types";
 
@@ -11,7 +12,8 @@ function maskAddress(addr: string): string {
 }
 
 export default function ProfilePage() {
-  const { isConnected, address, balance } = useWalletContext();
+  const { isConnected, address } = useWalletContext();
+  const { obombBalance, energyPotions, refreshBalances } = useBalance();
   const [heroes, setHeroes] = useState<Hero[]>([]);
   const [username, setUsernameState] = useState("");
   const [editing, setEditing] = useState(false);
@@ -60,7 +62,7 @@ export default function ProfilePage() {
   const cosEquipped = cosmetics.filter(c => c.owner).length;
   const cosFree = cosmetics.filter(c => !c.owner).length;
 
-  const potions = getEnergyPotions();
+  const potions = energyPotions;
   const listings = getActiveListings();
 
   const statCards = [
@@ -118,7 +120,7 @@ export default function ProfilePage() {
               {copied ? "Copied!" : "Copy"}
             </button>
           </div>
-          <p className="text-xs text-yellow-400">🪙 {parseFloat(balance).toFixed(4)} {TOKEN_SYMBOL}</p>
+          <p className="text-xs text-yellow-400">🪙 {parseFloat(obombBalance).toFixed(4)} {TOKEN_SYMBOL}</p>
         </div>
       </div>
 
