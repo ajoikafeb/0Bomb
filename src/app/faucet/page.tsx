@@ -1,23 +1,24 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useWalletContext } from "@/components/wallet/WalletProvider";
-import { claimFaucet, getFaucetCooldown, getPlayerBalance } from "@/lib/game/GameStateManager";
+import { useBalance } from "@/components/balance/BalanceProvider";
+import { claimFaucet, getFaucetCooldown } from "@/lib/game/GameStateManager";
 
 export default function FaucetPage() {
   const { isConnected, address } = useWalletContext();
+  const { playerBalance, refreshBalances } = useBalance();
   const [cooldown, setCooldown] = useState(0);
-  const [balance, setBalance] = useState(0);
   const [msg, setMsg] = useState("");
   const [claiming, setClaiming] = useState(false);
 
   const refresh = () => {
     if (address) {
       setCooldown(getFaucetCooldown(address));
-      setBalance(getPlayerBalance(address));
+      refreshBalances();
     }
   };
 
-  useEffect(() => { refresh(); }, [address]);
+  useEffect(() => { refresh(); }, [address, refreshBalances]);
   useEffect(() => { if (cooldown > 0) { const t = setInterval(() => { const c = getFaucetCooldown(address); setCooldown(c); if (c <= 0) clearInterval(t); }, 10000); return () => clearInterval(t); } }, [cooldown, address]);
 
   const handleClaim = async () => {
@@ -25,6 +26,7 @@ export default function FaucetPage() {
     setClaiming(true);
     const result = claimFaucet(address);
     setMsg(result.message);
+    await refreshBalances();
     refresh();
     setClaiming(false);
   };
@@ -48,7 +50,7 @@ export default function FaucetPage() {
             <>
               <div className="flex justify-between text-sm">
                 <span className="text-gray-400">Balance</span>
-                <span className="text-cyan-400 font-mono font-bold">{balance.toLocaleString()} 0BOMB</span>
+                <span className="text-cyan-400 font-mono font-bold">{playerBalance.toLocaleString()} 0BOMB</span>
               </div>
 
               <div className="flex justify-between text-sm">

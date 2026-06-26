@@ -1,5 +1,5 @@
 import type { Hero, Memory, MarketplaceListing, MapProgression, RewardChest, RewardChestItem, UpgradeSeed } from "@/lib/game/types";
-import { TRAIT_DEFINITIONS, MEMORY_EVENTS, ENERGY_REGEN_INTERVAL, ENERGY_REGEN_AMOUNT, MARKETPLACE_FEE, TREASURY_ADDRESS, CORE_STATS, DIFFICULTIES, DIFFICULTY_CONFIG, ENERGY_COST_BY_DIFFICULTY, CLEAR_TIME_BONUS_CONFIG, DROP_RATES, UPGRADE_SEEDS } from "@/lib/game/constants";
+import { TRAIT_DEFINITIONS, MEMORY_EVENTS, ENERGY_REGEN_INTERVAL, ENERGY_REGEN_AMOUNT, MARKETPLACE_FEE, TREASURY_ADDRESS, CORE_STATS, DIFFICULTIES, DIFFICULTY_CONFIG, ENERGY_COST_BY_DIFFICULTY, CLEAR_TIME_BONUS_CONFIG, DROP_RATES, UPGRADE_SEEDS, VOUCHER_MAX_HERO, VOUCHER_MAX_EQUIPMENT, VOUCHER_MAX_COSMETIC, HERO_HATCH_COST, LOOT_MINT_COST, COSMETIC_MINT_COST } from "@/lib/game/constants";
 import type { Difficulty } from "@/lib/game/constants";
 import type { Equipment } from "@/lib/game/equipmentSystem";
 import { generateEquipment } from "@/lib/game/equipmentSystem";
@@ -119,10 +119,12 @@ interface GameSave {
   fragments?: Record<string, number>;
   withdrawalRequests?: WithdrawalRequest[];
   faucetClaims?: Record<string, number>;
+  voucherUsage?: Record<string, { hero: number; equipment: number; cosmetic: number }>;
+  soulboundItemIds?: string[];
 }
 
 function loadSave(): GameSave {
-  if (typeof window === "undefined") return { heroes: [], inventory: [], cosmetics: [], listings: [], energyPotions: 0, activeMap: null, nextId: 1, adminConfig: { ...DEFAULT_ADMIN_CONFIG }, inbox: [], transactions: [], username: "", tokenBalance: 0, bannedAddresses: [], frozenAddresses: [], itemBlacklist: [], auditLog: [], tokenBalances: {}, usernames: {}, potionCounts: {}, fragments: {}, withdrawalRequests: [], faucetClaims: {} };
+  if (typeof window === "undefined") return { heroes: [], inventory: [], cosmetics: [], listings: [], energyPotions: 0, activeMap: null, nextId: 1, adminConfig: { ...DEFAULT_ADMIN_CONFIG }, inbox: [], transactions: [], username: "", tokenBalance: 0, bannedAddresses: [], frozenAddresses: [], itemBlacklist: [], auditLog: [], tokenBalances: {}, usernames: {}, potionCounts: {}, fragments: {}, withdrawalRequests: [], faucetClaims: {}, voucherUsage: {}, soulboundItemIds: [] };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -153,6 +155,8 @@ function loadSave(): GameSave {
       }
       if (!save.withdrawalRequests) save.withdrawalRequests = [];
       if (!save.faucetClaims) save.faucetClaims = {};
+      if (!save.voucherUsage) save.voucherUsage = {};
+      if (!save.soulboundItemIds) save.soulboundItemIds = [];
       // Migrate old single-tokenBalance to per-wallet if any legacy data exists
       if (save.tokenBalance && Object.keys(save.tokenBalances).length === 0) {
         save.tokenBalances["_legacy"] = save.tokenBalance;
@@ -221,7 +225,7 @@ function loadSave(): GameSave {
       return save;
     }
   } catch {}
-  return { heroes: [], inventory: [], cosmetics: [], listings: [], energyPotions: 0, activeMap: null, nextId: 1, adminConfig: { ...DEFAULT_ADMIN_CONFIG }, inbox: [], transactions: [], username: "", tokenBalance: 0, bannedAddresses: [], frozenAddresses: [], itemBlacklist: [], auditLog: [], tokenBalances: {}, usernames: {}, potionCounts: {}, faucetClaims: {} };
+  return { heroes: [], inventory: [], cosmetics: [], listings: [], energyPotions: 0, activeMap: null, nextId: 1, adminConfig: { ...DEFAULT_ADMIN_CONFIG }, inbox: [], transactions: [], username: "", tokenBalance: 0, bannedAddresses: [], frozenAddresses: [], itemBlacklist: [], auditLog: [], tokenBalances: {}, usernames: {}, potionCounts: {}, faucetClaims: {}, voucherUsage: {}, soulboundItemIds: [] };
 }
 
 function saveState(save: GameSave) {
@@ -384,7 +388,26 @@ export function getEffectiveStats(hero: Hero): Record<string, number> {
     }
   }
   // Apply equipment bonuses
-  // (equipment stat mapping happens in the battle system)
+  const save = loadSave();
+  for (const [slot, itemId] of Object.entries(hero.equipment)) {
+    if (!itemId) continue;
+    const item = save.inventory.find(i => i.id === itemId);
+    if (item) {
+      for (const [k, v] of Object.entries(item.stats)) {
+        combined[k] = (combined[k] || 0) + v;
+      }
+    }
+  }
+  // Apply cosmetic stat bonuses
+  for (const [slot, cosmeticId] of Object.entries(hero.cosmetics)) {
+    if (!cosmeticId) continue;
+    const cosmetic = save.cosmetics.find(c => c.id === cosmeticId);
+    if (cosmetic) {
+      for (const [k, v] of Object.entries(cosmetic.statBonus)) {
+        combined[k] = (combined[k] || 0) + v;
+      }
+    }
+  }
   return combined;
 }
 
@@ -607,11 +630,65 @@ export function unequipItem(heroId: string, slot: string): boolean {
 
 const RARITY_RANK: Record<string, number> = { Common: 0, Rare: 1, Epic: 2, Legendary: 3, Mythic: 4, Genesis: 5 };
 
+// Class-specific stat weight preferences for equipment scoring
+const CLASS_STAT_WEIGHTS: Record<string, Record<string, number>> = {
+  Engineer:  { power: 0.3, defense: 0.4, speed: 0.8, intelligence: 1.0, luck: 0.6, vitality: 0.5 },
+  Marine:    { power: 1.0, defense: 0.9, speed: 0.5, intelligence: 0.2, luck: 0.3, vitality: 0.8 },
+  Scientist: { power: 0.2, defense: 0.3, speed: 0.4, intelligence: 1.0, luck: 0.9, vitality: 0.3 },
+  Medic:     { power: 0.2, defense: 0.6, speed: 0.5, intelligence: 0.9, luck: 0.5, vitality: 1.0 },
+  Scout:     { power: 0.4, defense: 0.3, speed: 1.0, intelligence: 0.5, luck: 0.8, vitality: 0.4 },
+  Commander: { power: 0.8, defense: 0.6, speed: 0.6, intelligence: 0.7, luck: 0.4, vitality: 0.6 },
+  Miner:     { power: 0.9, defense: 0.7, speed: 0.3, intelligence: 0.3, luck: 0.5, vitality: 0.7 },
+};
+
+// Slot stat mappings for equipment evaluation
+const SLOT_STAT_MAP: Record<string, string[]> = {
+  "Bomb Core":     ["bomb_damage", "bomb_range"],
+  "Engine":        ["speed", "max_energy"],
+  "Armor":         ["hp", "defense"],
+  "Memory Chip":   ["intel_gain", "memory_cap"],
+  "Scanner":       ["loot_range", "hazard_detect"],
+  "Utility Device":["energy_regen", "luck"],
+};
+
+export function getEquipmentScore(item: Equipment, heroClass: string): number {
+  const rarityMult = (RARITY_RANK[item.rarity] ?? 0) + 1;
+  const weights = CLASS_STAT_WEIGHTS[heroClass] || CLASS_STAT_WEIGHTS.Marine;
+  const slotStats = SLOT_STAT_MAP[item.slot] || [];
+  let statScore = 0;
+  let slotMatchBonus = 0;
+  for (const [stat, value] of Object.entries(item.stats)) {
+    const w = weights[stat] || 0.5;
+    statScore += value * w;
+    if (slotStats.includes(stat)) slotMatchBonus += value * 0.2;
+  }
+  return statScore * rarityMult + slotMatchBonus;
+}
+
+export function getWalletEquipment(walletAddress: string): Equipment[] {
+  const save = loadSave();
+  const heroIds = new Set(save.heroes.filter(h => h.owner_address === walletAddress).map(h => h.id));
+  return save.inventory.filter(i => !i.owner || i.owner === walletAddress || heroIds.has(i.owner));
+}
+
+export function getWalletCosmetics(walletAddress: string): Cosmetic[] {
+  const save = loadSave();
+  const heroIds = new Set(save.heroes.filter(h => h.owner_address === walletAddress).map(h => h.id));
+  return save.cosmetics.filter(c => !c.owner || c.owner === walletAddress || heroIds.has(c.owner));
+}
+
+export function refreshWalletInventory(walletAddress: string): { heroes: Hero[]; inventory: Equipment[]; cosmetics: Cosmetic[] } {
+  return {
+    heroes: getHeroes().filter(h => h.owner_address === walletAddress),
+    inventory: getWalletEquipment(walletAddress),
+    cosmetics: getWalletCosmetics(walletAddress),
+  };
+}
+
 export function autoEquipHero(heroId: string): number {
   const hero = getHero(heroId);
   if (!hero) return 0;
   let equipped = 0;
-
   for (const slot of Object.keys(hero.equipment)) {
     const candidates = (() => {
       const save = loadSave();
@@ -619,12 +696,9 @@ export function autoEquipHero(heroId: string): number {
     })();
     if (candidates.length === 0) continue;
     const best = candidates.reduce((a, b) => {
-      const aRank = RARITY_RANK[a.rarity] ?? 0;
-      const bRank = RARITY_RANK[b.rarity] ?? 0;
-      if (aRank !== bRank) return aRank > bRank ? a : b;
-      const aStat = Object.values(a.stats).reduce((s, v) => s + v, 0);
-      const bStat = Object.values(b.stats).reduce((s, v) => s + v, 0);
-      return aStat >= bStat ? a : b;
+      const aScore = getEquipmentScore(a, hero.class);
+      const bScore = getEquipmentScore(b, hero.class);
+      return aScore >= bScore ? a : b;
     });
     equipItem(heroId, { ...best, owner: heroId });
     equipped++;
@@ -786,6 +860,73 @@ export function unequipAll(heroId: string): number {
   return count;
 }
 
+// === Inventory Validation ===
+
+export function validateInventory(walletAddress: string): { valid: boolean; heroCount: number; equipCount: number; expectedHeroCount: number; expectedEquipCount: number; missingEquip: string[]; issues: string[] } {
+  const save = loadSave();
+  const heroes = save.heroes.filter(h => h.owner_address === walletAddress);
+  const heroIds = new Set(heroes.map(h => h.id));
+  const inventoryItems = save.inventory.filter(i => !i.owner || i.owner === walletAddress || heroIds.has(i.owner));
+  const issues: string[] = [];
+  const missingEquip: string[] = [];
+
+  // Check each hero's equipment references exist in inventory
+  for (const hero of heroes) {
+    for (const [slot, equipId] of Object.entries(hero.equipment)) {
+      if (!equipId) continue;
+      const item = save.inventory.find(i => i.id === equipId);
+      if (!item) {
+        missingEquip.push(`${hero.name}[${slot}]: ${equipId}`);
+        issues.push(`Hero ${hero.name} references equipment ${equipId} in slot ${slot} but item not found in inventory`);
+      } else if (item.owner !== hero.id) {
+        issues.push(`Hero ${hero.name} has ${equipId} in slot ${slot} but item.owner is "${item.owner}" instead of "${hero.id}"`);
+      }
+    }
+  }
+
+  // Check no item has owner = null AND is referenced by a hero
+  const equippedIds = new Set<string>();
+  for (const hero of heroes) {
+    for (const equipId of Object.values(hero.equipment)) {
+      if (equipId) equippedIds.add(equipId);
+    }
+  }
+  for (const item of save.inventory) {
+    if (equippedIds.has(item.id) && !item.owner) {
+      issues.push(`Item ${item.name} (${item.id}) is in hero equipment slot but has no owner`);
+    }
+    if (item.owner && equippedIds.has(item.id) && item.owner !== walletAddress && !heroIds.has(item.owner)) {
+      // This is OK if item owner is the wallet or a specific hero
+    }
+  }
+
+  return {
+    valid: issues.length === 0,
+    heroCount: heroes.length,
+    equipCount: inventoryItems.length,
+    expectedHeroCount: heroes.length,
+    expectedEquipCount: inventoryItems.length,
+    missingEquip,
+    issues,
+  };
+}
+
+export function forceRefreshInventory(walletAddress: string): void {
+  const fresh = refreshWalletInventory(walletAddress);
+  // Force cleanup: ensure no orphaned equipment references
+  const save = loadSave();
+  for (const hero of save.heroes.filter(h => h.owner_address === walletAddress)) {
+    for (const [slot, equipId] of Object.entries(hero.equipment)) {
+      if (!equipId) continue;
+      const exists = save.inventory.find(i => i.id === equipId);
+      if (!exists) {
+        hero.equipment[slot] = null;
+      }
+    }
+  }
+  saveState(save);
+}
+
 // === Marketplace ===
 
 export function getListings(): MarketplaceListing[] {
@@ -801,6 +942,9 @@ export function getActiveListings(): MarketplaceListing[] {
 
 export function createListing(seller: string, itemType: "hero" | "equipment" | "cosmetic" | "potion", itemId: string, price: string, potionQty?: number): MarketplaceListing | null {
   const save = loadSave();
+
+  // Reject soulbound items
+  if (itemType !== "potion" && isItemSoulbound(itemId)) return null;
 
   // Verify ownership
   if (itemType === "hero") {
@@ -1424,6 +1568,82 @@ export function claimFaucet(address: string | null): { ok: boolean; message: str
   addTransaction({ type: "income", category: "reward", amount: String(FAUCET_AMOUNT), description: `Faucet claim — ${FAUCET_AMOUNT} free 0BOMB`, ownerAddress: addr });
   return { ok: true, message: `Claimed ${FAUCET_AMOUNT} free 0BOMB!` };
 }
+
+// === Voucher System ===
+
+const VOUCHER_MAX: Record<"hero" | "equipment" | "cosmetic", number> = {
+  hero: VOUCHER_MAX_HERO,
+  equipment: VOUCHER_MAX_EQUIPMENT,
+  cosmetic: VOUCHER_MAX_COSMETIC,
+};
+
+const VOUCHER_COST: Record<"hero" | "equipment" | "cosmetic", string> = {
+  hero: HERO_HATCH_COST,
+  equipment: LOOT_MINT_COST,
+  cosmetic: COSMETIC_MINT_COST,
+};
+
+export function getVoucherUsage(address: string | null, type: "hero" | "equipment" | "cosmetic"): number {
+  if (!address) return 0;
+  const save = loadSave();
+  const usage = save.voucherUsage?.[address.toLowerCase()];
+  if (!usage) return 0;
+  return usage[type] || 0;
+}
+
+export function getVoucherRemaining(address: string | null, type: "hero" | "equipment" | "cosmetic"): number {
+  const max = VOUCHER_MAX[type];
+  const used = getVoucherUsage(address, type);
+  return Math.max(0, max - used);
+}
+
+export function useVoucher(address: string | null, type: "hero" | "equipment" | "cosmetic"): boolean {
+  if (!address) return false;
+  const remaining = getVoucherRemaining(address, type);
+  if (remaining <= 0) return false;
+  const save = loadSave();
+  const addr = address.toLowerCase();
+  if (!save.voucherUsage) save.voucherUsage = {};
+  if (!save.voucherUsage[addr]) save.voucherUsage[addr] = { hero: 0, equipment: 0, cosmetic: 0 };
+  save.voucherUsage[addr][type]++;
+  saveState(save);
+  addTransaction({
+    type: "expense",
+    category: type === "hero" ? "hatch" : type === "equipment" ? "mint_loot" : "mint_cosmetic",
+    amount: "0",
+    description: `Free mint (${type}) — voucher ${getVoucherUsage(address, type) + 1}/${VOUCHER_MAX[type]}`,
+    ownerAddress: addr,
+  });
+  return true;
+}
+
+export const VOUCHER_SAVED_COST = VOUCHER_COST;
+
+export function markSoulbound(itemId: string) {
+  if (!itemId) return;
+  const save = loadSave();
+  if (!save.soulboundItemIds) save.soulboundItemIds = [];
+  if (!save.soulboundItemIds.includes(itemId)) {
+    save.soulboundItemIds.push(itemId);
+    saveState(save);
+  }
+}
+
+export function isItemSoulbound(itemId: string): boolean {
+  if (!itemId) return false;
+  const save = loadSave();
+  return save.soulboundItemIds?.includes(itemId) ?? false;
+}
+
+export function adminResetVouchers(address: string | null) {
+  if (!address) return;
+  const save = loadSave();
+  const addr = address.toLowerCase();
+  if (save.voucherUsage) delete save.voucherUsage[addr];
+  saveState(save);
+}
+
+// === Admin Functions ===
 
 export function adminTransferCosmetic(itemId: string, targetAddress: string) {
   const save = loadSave();

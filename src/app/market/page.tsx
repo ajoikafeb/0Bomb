@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useWalletContext } from "@/components/wallet/WalletProvider";
+import { useBalance } from "@/components/balance/BalanceProvider";
 import { getActiveListings, getHeroes, getInventory, getCosmetics, createListing, cancelListing, buyListing, getEnergyPotions, isEmergencyShutdown, addTransaction, isAddressFrozen, getAdminConfig, initMarketplaceSync } from "@/lib/game/GameStateManager";
-import { getTokenBalance, transferToken } from "@/lib/blockchain/provider";
+import { transferToken } from "@/lib/blockchain/provider";
 import { TOKEN_SYMBOL } from "@/lib/game/constants";
 import { getRarityColor, formatStatLabel } from "@/lib/game/equipmentSystem";
 import { getCosmeticColor } from "@/lib/game/cosmeticSystem";
@@ -59,9 +60,9 @@ function Pagination({ page, total, perPage, onChange }: { page: number; total: n
 
 export default function MarketPage() {
   const { isConnected, address, refreshBalance } = useWalletContext();
+  const { obombBalance, refreshBalances } = useBalance();
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [category, setCategory] = useState<Category>("hero");
-  const [tokenBal, setTokenBal] = useState("0");
   const [buyingId, setBuyingId] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
 
@@ -81,9 +82,7 @@ export default function MarketPage() {
 
   const refresh = async () => {
     setListings(getActiveListings());
-    if (address) {
-      try { const bal = await getTokenBalance(address); setTokenBal(bal); } catch {}
-    }
+    if (address) await refreshBalances();
   };
 
   useEffect(() => {
@@ -135,7 +134,7 @@ export default function MarketPage() {
       if (result) {
         addTransaction({ type: "expense", category: "market_buy", amount: listing.price, description: `Bought ${listing.item_type} for ${listing.price} ${TOKEN_SYMBOL}`, ownerAddress: address });
         setMsg(`✅ Bought! ${listing.price} ${TOKEN_SYMBOL} transferred`);
-        refreshBalance(); refresh();
+        refreshBalance(); refresh(); await refreshBalances();
       } else setMsg("❌ Purchase failed");
     } catch (e: any) { setMsg(e?.message?.includes("user rejected") ? "Transaction cancelled" : `❌ Buy failed: ${e.message}`); }
     finally { setBuyingId(null); setTimeout(() => setMsg(""), 4000); }
@@ -184,7 +183,7 @@ export default function MarketPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">Marketplace</h1>
         <div className="flex items-center gap-3">
-          <span className="text-[10px] text-gray-400">🪙 {parseFloat(tokenBal).toFixed(2)} {TOKEN_SYMBOL}</span>
+          <span className="text-[10px] text-gray-400">🪙 {parseFloat(obombBalance).toFixed(2)} {TOKEN_SYMBOL}</span>
           <button onClick={() => setShowCreate(true)} className="px-3 py-1.5 text-[10px] font-bold bg-gradient-to-r from-cyan-600 to-purple-600 rounded text-white">+ Create Listing</button>
         </div>
       </div>

@@ -1,0 +1,13 @@
+{
+  "network": "ogTestnet",
+  "chainId": "16602",
+  "deployer": "0x903286036eBa85425ca8af261c5F249F71D66976",
+  "contracts": {
+    "HeroNFT": "0xE8Fa07871A8ed22970F4E587B07016B0EB123B5f",
+    "EquipmentNFT": "0x2e3c6651E675D55D83191fD1b2F140C1b36E88bD",
+    "CosmeticNFT": "0xE997903767808BF3536E78d391B8cCBddF5f43F7",
+    "LegacyCoreNFT": "0x23D3120CBbEAc56CC2a6F8D1FBeE78cd4248beD2",
+    "BadgeNFT": "0x23316eC64c6c2a934b4dFfDEB89ca37748B1C669"
+  },
+  "timestamp": "2026-06-23T04:35:15.673Z"
+}

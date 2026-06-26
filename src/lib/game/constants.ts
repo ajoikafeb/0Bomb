@@ -167,6 +167,10 @@ export const LOOT_MINT_COST = "5";
 export const COSMETIC_MINT_COST = "10";
 export const TREASURY_ADDRESS = "0xa8DAb875Eb73173C8C96215445263AA6a6851Af6";
 
+export const VOUCHER_MAX_HERO = 3;
+export const VOUCHER_MAX_EQUIPMENT = 3;
+export const VOUCHER_MAX_COSMETIC = 3;
+
 export const MEMORY_EVENTS = [
   "Killed Alien", "Found Rare Loot", "Touched Lava",
   "Near Death Escape", "Perfect Clear", "Boss Kill",

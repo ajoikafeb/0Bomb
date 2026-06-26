@@ -1,6 +1,6 @@
 import type { Hero, Memory } from "@/lib/game/types";
 import { BATTLE_DROPS } from "@/lib/game/dropRates";
-import { CORE_STATS, AI_STATS, FARMING_STATS } from "@/lib/game/constants";
+import { CORE_STATS, AI_STATS, FARMING_STATS, TRAIT_DEFINITIONS } from "@/lib/game/constants";
 
 const TILE = 32;
 const COLS = 21;
@@ -35,6 +35,7 @@ export interface HeroSim {
   name: string;
   class: string;
   rarity: string;
+  cosmetics?: Record<string, string | null>;
   hp: number;
   maxHp: number;
   alive: boolean;
@@ -56,9 +57,12 @@ export interface HeroSim {
   risk_awareness: number;
   exploration: number;
   aggression: number;
+  // ─── Runtime State ────────────────────────────────────
+  currentAction?: string;
   // ─── Farming Stats ─────────────────────────────────────
   mining: number;
   scavenging: number;
+  auto_deploy?: boolean;
   treasure_hunter: number;
   efficiency: number;
   // ─── Personality ───────────────────────────────────────
@@ -163,7 +167,7 @@ export function createGameState(
   };
 }
 
-function generateEnemies(grid: TileType[][], enemyMin = 4, enemyMax = 7, hpBonus = 0): EnemySim[] {
+export function generateEnemies(grid: TileType[][], enemyMin = 4, enemyMax = 7, hpBonus = 0): EnemySim[] {
   const enemyCount = enemyMin + Math.floor(Math.random() * (enemyMax - enemyMin + 1));
   const enemies: EnemySim[] = [];
   const bossTypes = ["Lava Titan", "Hive Queen", "Ancient Guardian", "Void Dragon"];
@@ -194,7 +198,7 @@ function generateEnemies(grid: TileType[][], enemyMin = 4, enemyMax = 7, hpBonus
   return enemies;
 }
 
-function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
+export function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
   const spawnCells: { x: number; y: number }[] = [];
   for (let y = 1; y <= 3; y++) {
     for (let x = 1; x <= 3; x++) {
@@ -211,6 +215,16 @@ function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
   return heroes.map((h, i) => {
     const cell = i < spawnCells.length ? spawnCells[i] : { x: 1 + Math.floor(Math.random() * 3), y: 1 + Math.floor(Math.random() * 3) };
     const baseHp = 3 + Math.floor(h.stats.vitality / 20);
+    // Apply trait bonuses to effective stats
+    const effectiveStats: Record<string, number> = { ...h.stats };
+    for (const traitName of h.traits || []) {
+      const def = TRAIT_DEFINITIONS[traitName];
+      if (def) {
+        for (const [k, bonus] of Object.entries(def.bonus)) {
+          if (k in effectiveStats) effectiveStats[k] = Math.min(100, (effectiveStats[k] || 0) + bonus);
+        }
+      }
+    }
     return {
       id: h.id,
       x: cell.x, y: cell.y,
@@ -228,12 +242,12 @@ function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
       lastAction: "spawn",
       stuckTicks: 0,
       searchTarget: null,
-      power: h.stats.power,
-      defense: h.stats.defense,
-      speed: h.stats.speed,
-      intelligence: h.stats.intelligence,
-      luck: h.stats.luck,
-      vitality: h.stats.vitality,
+      power: effectiveStats.power,
+      defense: effectiveStats.defense,
+      speed: effectiveStats.speed,
+      intelligence: effectiveStats.intelligence,
+      luck: effectiveStats.luck,
+      vitality: effectiveStats.vitality,
       learning_rate: h.ai_stats.learning_rate,
       adaptability: h.ai_stats.adaptability,
       risk_awareness: h.ai_stats.risk_awareness,
@@ -258,6 +272,8 @@ function spawnHeroes(heroes: Hero[], grid: TileType[][]): HeroSim[] {
       tilesExplored: 0,
       damageDealt: 0,
       damageTaken: 0,
+      cosmetics: h.cosmetics || undefined,
+      auto_deploy: h.auto_deploy,
     };
   });
 }
@@ -319,35 +335,22 @@ export function tickGame(state: GameState, tickMs: number): GameState {
     if (!hero.alive) continue;
 
     hero.bombCooldown = Math.max(0, hero.bombCooldown - tickMs);
-    hero.moveCooldown = Math.max(0, hero.moveCooldown - tickMs);
 
-    // Movement speed affects how often hero can act
     const speedFactor = Math.max(0.3, hero.speed / 100);
-    const effectiveTick = tickMs * (0.5 + speedFactor);
-    hero.moveCooldown = Math.max(0, hero.moveCooldown - effectiveTick + tickMs);
+    const effectiveTick = Math.floor(tickMs * (0.5 + speedFactor));
+    hero.moveCooldown = Math.max(0, hero.moveCooldown - effectiveTick);
 
     if (hero.moveCooldown > 0) continue;
 
-    // ─── Stuck Detection ──────────────────────────────────
-    hero.positionHistory.push({ x: hero.x, y: hero.y, tick: state.tick });
-    if (hero.positionHistory.length > 10) hero.positionHistory.shift();
-    const recent = hero.positionHistory.filter(p => p.tick > state.tick - 15);
-    const samePos = recent.every(p => p.x === hero.x && p.y === hero.y);
-    if (samePos && recent.length >= 5) {
-      hero.stuckTicks++;
-      if (hero.stuckTicks > 3) {
-        hero.stuckTicks = 0;
-        hero.searchTarget = null;
-        hero.positionHistory = [];
-        state.logs.push(`${hero.name} was stuck — recalculating path`);
-      }
-    } else {
-      hero.stuckTicks = 0;
+    // ─── Stuck Recovery ──────────────────────────────────
+    if (hero.searchTarget && hero.x === hero.searchTarget.x && hero.y === hero.searchTarget.y) {
+      hero.searchTarget = null;
     }
 
     const threats = scanThreats(state, hero);
     const opportunities = scanOpportunities(state, hero);
     const action = decideAction(hero, threats, opportunities, state);
+    hero.currentAction = action;
     executeAction(state, hero, action, tickMs);
 
     // Reset move cooldown based on speed
@@ -541,7 +544,7 @@ function calculateTeamCenter(state: GameState): { x: number; y: number } {
   };
 }
 
-type ActionKey = "bomb" | "collect_loot" | "explore" | "evade" | "avoid_lava" | "idle" | "wander";
+type ActionKey = "bomb" | "collect_loot" | "explore" | "evade" | "avoid_lava" | "idle" | "wander" | "seek";
 
 function scoreAction(hero: HeroSim, action: ActionKey, threats: string[], opportunities: string[], state: GameState): number {
   const int = hero.intelligence;
@@ -684,17 +687,30 @@ function scoreAction(hero: HeroSim, action: ActionKey, threats: string[], opport
       break;
     }
 
+    case "seek": {
+      score = 45;
+      score += intMod * 10;
+      score += hero.brave * 0.3 + hero.aggression * 0.2;
+      score += hero.tactical * 0.2;
+      score -= hero.lazy * 0.2;
+      score -= hero.risk_awareness * 0.1;
+      if (hero.traits.includes("Alien Slayer")) score += 15;
+      if (hero.traits.includes("Speed Demon")) score += 10;
+      if (threats.includes("enemy_nearby") || opportunities.includes("enemy_bombable")) score += 30;
+      else score -= 15;
+      break;
+    }
+
     case "idle": {
       score = 5;
-      score += hero.lazy * 0.4;
       score += (100 - hero.aggression) * 0.05;
       score += (100 - hero.brave) * 0.05;
       // Energy: low energy → prefer idle (especially for smart heroes)
       const energyPct = hero.energy / hero.max_energy;
       if (energyPct < 0.2) {
-        score += 25 + intMod * 10; // smart heroes conserve when low on energy
+        score += 10 + intMod * 5; // smart heroes conserve when low on energy
       } else if (energyPct < 0.4) {
-        score += 10 + intMod * 5;
+        score += 5 + intMod * 3;
       }
       // Nothing to do
       if (opportunities.length === 0 && threats.length === 0 && Math.random() < 0.3) score += 15;
@@ -736,7 +752,7 @@ function scoreAction(hero: HeroSim, action: ActionKey, threats: string[], opport
 }
 
 function decideAction(hero: HeroSim, threats: string[], opportunities: string[], state: GameState): string {
-  const actions: ActionKey[] = ["bomb", "collect_loot", "explore", "evade", "avoid_lava", "idle", "wander"];
+  const actions: ActionKey[] = ["seek", "bomb", "collect_loot", "explore", "evade", "avoid_lava", "idle", "wander"];
   let bestAction: ActionKey = "explore";
   let bestScore = -Infinity;
 
@@ -824,8 +840,41 @@ function executeAction(state: GameState, hero: HeroSim, action: string, _tickMs:
       if (hero.bombCooldown <= 0) placeBomb(state, hero);
       break;
     }
+    case "seek": {
+      const liveEnemies = state.enemies.filter(e => e.hp > 0);
+      if (liveEnemies.length > 0) {
+        let nearest = liveEnemies[0];
+        let minDist = Math.abs(nearest.x - hero.x) + Math.abs(nearest.y - hero.y);
+        for (const e of liveEnemies) {
+          const d = Math.abs(e.x - hero.x) + Math.abs(e.y - hero.y);
+          if (d < minDist) { minDist = d; nearest = e; }
+        }
+        const allDirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        allDirs.sort((a, b) => {
+          const da = Math.abs(hero.x + a[0] - nearest.x) + Math.abs(hero.y + a[1] - nearest.y);
+          const db = Math.abs(hero.x + b[0] - nearest.x) + Math.abs(hero.y + b[1] - nearest.y);
+          return da - db;
+        });
+        for (const [ddx, ddy] of allDirs) {
+          if (tryMoveHero(state, hero, ddx, ddy)) return;
+        }
+      }
+      // Fallback: explore if seek can't move
+      const edirs = [[0, -1], [0, 1], [-1, 0], [1, 0]].sort(() => Math.random() - 0.5);
+      for (const [dx, dy] of edirs) {
+        if (tryMoveHero(state, hero, dx, dy)) { hero.tilesExplored++; return; }
+      }
+      if (hero.bombCooldown <= 0) placeBomb(state, hero);
+      break;
+    }
     case "idle": {
-      // Lazy heroes conserve energy by doing nothing
+      // Slow wander — hero moves occasionally even when conserving energy
+      if (Math.random() < 0.4) {
+        const dirs = [[0, -1], [0, 1], [-1, 0], [1, 0]].sort(() => Math.random() - 0.5);
+        for (const [dx, dy] of dirs) {
+          if (tryMoveHero(state, hero, dx, dy)) { hero.tilesExplored++; break; }
+        }
+      }
       if (hero.bombCooldown <= 0 && Math.random() < 0.3) placeBomb(state, hero);
       break;
     }

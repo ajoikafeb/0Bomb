@@ -3,28 +3,27 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useWalletContext } from "@/components/wallet/WalletProvider";
+import { useBalance } from "@/components/balance/BalanceProvider";
 import { generateHero } from "@/lib/game/heroGenerator";
 import { generateEquipment } from "@/lib/game/equipmentSystem";
 import { generateCosmetic } from "@/lib/game/cosmeticSystem";
-import { addHero, getHeroes, addMemory, addXP, addIntelligence, updateHero, getHero, calculateScoreRewards, consumeEnergy, triggerEnergyRegen, addEnergyPotions, getEnergyPotions, useEnergyPotion, getActiveMap, clearActiveMap, createNewActiveMap, saveActiveMap, addToInventory, addCosmetic, isEmergencyShutdown, getEffectiveMultipliers, addTransaction, addFragments, getFragments, isAddressFrozen, isAddressBanned, getPlayerBalance, addPlayerBalance, evolveAIStats, autoBuildTeam, toggleAutoDeploy, getEnergyCostForDifficulty, getAutoFarmEligibleHeroes, generateRewardChest, claimRewardChest, autoRedeploy, consumeDeployEnergy } from "@/lib/game/GameStateManager";
-import { createGameState, tickGame, getGameResult, TileType, calculateMapProgress, type DropMultipliers } from "@/lib/game/AIDecisionEngine";
-import { DIFFICULTIES, DIFFICULTY_CONFIG, MAX_HEROES_PER_MAP, HERO_HATCH_COST, ENERGY_COST_BY_DIFFICULTY, CLEAR_TIME_BONUS_CONFIG } from "@/lib/game/constants";
-import { getTokenBalance, payForHatch } from "@/lib/blockchain/provider";
-import { renderHero, renderEnemy, renderBoss, renderBomb, renderExplosion, renderLoot, renderSolidWall, renderDestructible, renderLava, renderCrystal } from "@/lib/game/sprites";
+import { addHero, getHeroes, addMemory, addXP, addIntelligence, updateHero, getHero, calculateScoreRewards, consumeEnergy, triggerEnergyRegen, addEnergyPotions, getEnergyPotions, useEnergyPotion, getActiveMap, clearActiveMap, createNewActiveMap, saveActiveMap, addToInventory, addCosmetic, isEmergencyShutdown, getEffectiveMultipliers, addTransaction, addFragments, getFragments, isAddressFrozen, isAddressBanned, getPlayerBalance, addPlayerBalance, evolveAIStats, autoBuildTeam, toggleAutoDeploy, getEnergyCostForDifficulty, generateRewardChest, claimRewardChest, getVoucherRemaining, useVoucher, getVoucherUsage, markSoulbound, getEffectiveStats } from "@/lib/game/GameStateManager";
+import { createGameState, spawnHeroes, tickGame, getGameResult, TileType, calculateMapProgress, generateEnemies, type DropMultipliers } from "@/lib/game/AIDecisionEngine";
+import { DIFFICULTIES, DIFFICULTY_CONFIG, MAX_HEROES_PER_MAP, HERO_HATCH_COST, ENERGY_COST_BY_DIFFICULTY, CLEAR_TIME_BONUS_CONFIG, VOUCHER_MAX_HERO } from "@/lib/game/constants";
+import { payForHatch } from "@/lib/blockchain/provider";
+import { mintHero } from "@/lib/blockchain/heroNFTService";
 import type { Hero, MapProgression, RewardChest, RewardChestItem } from "@/lib/game/types";
 import type { GameState, EnemySim } from "@/lib/game/AIDecisionEngine";
 import { playExplosion, playBombPlace, playKill, playLootPickup, playVictory, playDefeat, startMusic, stopMusic, setMusicEnabled, setSfxEnabled, isMusicEnabled, isSfxEnabled } from "@/lib/audio/audioManager";
-import { SpriteEngineer, SpriteScout, SpriteMarine, SpriteScientist, SpriteMedic, SpriteCommander, SpriteMiner } from "@/components/pixel-art/characters";
-
-const HERO_SPRITES: Record<string, React.FC<{ size?: number; className?: string }>> = {
-  Engineer: SpriteEngineer,
-  Scout: SpriteScout,
-  Marine: SpriteMarine,
-  Scientist: SpriteScientist,
-  Medic: SpriteMedic,
-  Commander: SpriteCommander,
-  Miner: SpriteMiner,
-};
+import BottomPanel from "@/components/game/BottomPanel";
+import { GameMap } from "@/components/game/GameMap";
+import { BattleHUD } from "@/components/game/BattleHUD";
+import { BattleResultPanel } from "@/components/game/BattleResultPanel";
+import { EmptyBattleState } from "@/components/game/EmptyBattleState";
+import { LeftPanel } from "@/components/game/LeftPanel";
+import { RightPanel } from "@/components/game/RightPanel";
+import { BottomStatusBar } from "@/components/game/BottomStatusBar";
+import type { Explosion } from "@/components/game/types";
 
 const TICK_INTERVAL = 350;
 const getEnergyCost = (d: string) => ENERGY_COST_BY_DIFFICULTY[d as "Easy" | "Advanced" | "Nightmare"] || 10;
@@ -38,13 +37,6 @@ interface SavedBattle {
   selectedIds: string[];
   elapsed: number;
   tickCount: number;
-}
-
-interface Explosion {
-  id: string;
-  x: number;
-  y: number;
-  timer: number;
 }
 
 interface BombInfo {
@@ -63,9 +55,9 @@ function calculateBlastCells(bomb: BombInfo, grid: number[][]): { x: number; y: 
       const ex = bomb.x + dx * r;
       const ey = bomb.y + dy * r;
       if (ex < 0 || ex >= COLS || ey < 0 || ey >= ROWS) break;
-      if (grid[ey][ex] === 1) break; // solid wall stops blast
+      if (grid[ey][ex] === 1) break;
       cells.push({ x: ex, y: ey });
-      if (grid[ey][ex] === 2) break; // destructible stops blast (but cell is shown)
+      if (grid[ey][ex] === 2) break;
     }
   }
   return cells;
@@ -87,7 +79,8 @@ function clearSavedBattle() {
 }
 
 export default function GamePage() {
-  const { isConnected, address, refreshBalance } = useWalletContext();
+  const { isConnected, address } = useWalletContext();
+  const { refreshBalances } = useBalance();
   const [heroes, setHeroes] = useState<Hero[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBattling, setIsBattling] = useState(false);
@@ -97,7 +90,6 @@ export default function GamePage() {
   const [battleResult, setBattleResult] = useState<any>(null);
   const [elapsed, setElapsed] = useState(0);
   const [showSquad, setShowSquad] = useState(true);
-  const [tokenBalance, setTokenBalance] = useState<string>("0");
   const [fragments, setFragments] = useState(0);
   const [hatching, setHatching] = useState(false);
   const [hatchError, setHatchError] = useState("");
@@ -110,7 +102,6 @@ export default function GamePage() {
   const [paused, setPaused] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const gameRef = useRef<GameState | null>(null);
-  const feedRef = useRef<HTMLDivElement>(null);
   const tickCountRef = useRef(0);
   const isBattlingRef = useRef(false);
   const logsRef = useRef<string[]>([]);
@@ -118,6 +109,8 @@ export default function GamePage() {
   const autoDeployRef = useRef(false);
   const pausedRef = useRef(false);
   const elapsedRef = useRef(0);
+  const activeMapRef = useRef<MapProgression | null>(null);
+  activeMapRef.current = activeMap;
   const prevLootRef = useRef<Record<string, number>>({});
   const [explosions, setExplosions] = useState<Explosion[]>([]);
   const explosionsRef = useRef<Explosion[]>([]);
@@ -125,13 +118,11 @@ export default function GamePage() {
   const [sfxOn, setSfxOn] = useState(true);
   const prevEnemyHpRef = useRef<Map<string, number>>(new Map());
 
-  // Check for saved battle on mount
   useEffect(() => {
     const saved = loadBattle();
     if (saved) setHasSavedBattle(true);
   }, []);
 
-  // Save active battle to localStorage (ref-based to avoid effect re-run on every tick)
   const persistBattleRef = useRef(() => {});
   persistBattleRef.current = () => {
     const g = gameRef.current;
@@ -145,14 +136,12 @@ export default function GamePage() {
     });
   };
 
-  // Save on visibility change (tab switch)
   useEffect(() => {
     const handle = () => { if (document.hidden) persistBattleRef.current(); };
     document.addEventListener("visibilitychange", handle);
     return () => document.removeEventListener("visibilitychange", handle);
   }, []);
 
-  // Save on page unload + cleanup interval on unmount
   useEffect(() => {
     const handleUnload = () => persistBattleRef.current();
     window.addEventListener("beforeunload", handleUnload);
@@ -163,20 +152,15 @@ export default function GamePage() {
     };
   }, []);
 
-  // Load heroes on wallet connect
   useEffect(() => {
     if (isConnected && address) {
       triggerEnergyRegen();
       setHeroes(getHeroes().filter(h => h.owner_address === address));
       setPotions(getEnergyPotions());
       setFragments(getFragments(address));
-      getTokenBalance(address).then(setTokenBalance).catch(() => setTokenBalance("0"));
+      refreshBalances();
     }
-  }, [isConnected, address]);
-
-  useEffect(() => {
-    if (feedRef.current) feedRef.current.scrollTop = 0;
-  }, [logs]);
+  }, [isConnected, address, refreshBalances]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
@@ -184,15 +168,6 @@ export default function GamePage() {
       if (prev.length >= MAX_HEROES_PER_MAP) return prev;
       return [...prev, id];
     });
-  };
-
-  const autoDeployNow = () => {
-    if (!address || isBattlingRef.current) return;
-    const fresh = getHeroes().filter(h => h.owner_address === address);
-    const energyCost = getEnergyCost(difficulty);
-    const available = fresh.filter(h => h.energy >= energyCost).slice(0, MAX_HEROES_PER_MAP);
-    if (available.length === 0) return;
-    startBattle(available.map(h => h.id));
   };
 
   const endBattle = (g: GameState) => {
@@ -242,6 +217,7 @@ export default function GamePage() {
       setHeroes(getHeroes().filter(h => h.owner_address === address));
       setPotions(getEnergyPotions());
       setFragments(getFragments(address));
+      refreshBalances();
     }
   };
 
@@ -297,7 +273,20 @@ export default function GamePage() {
     if (g) endBattle(g);
   };
 
+  const autoDeployNow = () => {
+    if (!address || isBattlingRef.current) return;
+    const fresh = getHeroes().filter(h => h.owner_address === address);
+    const energyCost = getEnergyCost(difficulty);
+    const available = fresh.filter(h => h.energy >= energyCost).slice(0, MAX_HEROES_PER_MAP);
+    if (available.length === 0) return;
+    startBattle(available.map(h => h.id));
+  };
 
+  const handleAutoBuild = () => {
+    if (!address) return;
+    const team = autoBuildTeam(address, difficulty);
+    setSelectedIds(team);
+  };
 
   const handleHatch = async () => {
     if (!address) return;
@@ -305,7 +294,6 @@ export default function GamePage() {
     setHatching(true);
     setHatchError("");
     try {
-      // Try on-chain payment first, fall back to in-game balance
       try {
         await payForHatch(HERO_HATCH_COST);
       } catch (e: any) {
@@ -324,9 +312,19 @@ export default function GamePage() {
       addHero(hero);
       addTransaction({ type: "expense", category: "hatch", amount: HERO_HATCH_COST, description: `Hatched ${hero.name} (${hero.rarity})`, ownerAddress: address });
       setHeroes(prev => [...prev, hero]);
-      const bal = await getTokenBalance(address);
-      setTokenBalance(bal);
-      refreshBalance();
+      try {
+        const HERO_CLASSES = ["Marine", "Scout", "Scientist", "Miner", "Medic", "Commander", "Engineer"];
+        const classIndex = HERO_CLASSES.indexOf(hero.class);
+        const rarityIndex = ["Common", "Rare", "Epic", "Legendary", "Mythic", "Genesis"].indexOf(hero.rarity);
+        const dnaHash = hero.genetics?.dna_quality || Math.floor(Math.random() * 1000000);
+        const bloodlineId = Math.floor(Math.random() * 1000000) + 1;
+        await mintHero(
+          hero.name, classIndex >= 0 ? classIndex : 0,
+          hero.generation || 1, rarityIndex >= 0 ? rarityIndex : 0,
+          dnaHash, bloodlineId, `https://api.0bomb.game/metadata/hero/${hero.id}`, false, "0"
+        );
+      } catch {}
+      await refreshBalances();
     } catch (e: any) {
       setHatchError(`Hatch failed: ${e?.message?.slice(0, 80) || "Unknown error"}`);
     } finally {
@@ -334,7 +332,36 @@ export default function GamePage() {
     }
   };
 
-  // Resume a saved battle
+  const handleFreeHatch = async () => {
+    if (!address) return;
+    if (!useVoucher(address, "hero")) return;
+    setHatching(true);
+    setHatchError("");
+    try {
+      const hero = generateHero(address);
+      addHero(hero);
+      markSoulbound(hero.id);
+      addTransaction({ type: "expense", category: "hatch", amount: "0", description: `Free hatch voucher (${getVoucherUsage(address, "hero")}/${VOUCHER_MAX_HERO}) — ${hero.name}`, ownerAddress: address });
+      setHeroes(prev => [...prev, hero]);
+      try {
+        const HERO_CLASSES = ["Marine", "Scout", "Scientist", "Miner", "Medic", "Commander", "Engineer"];
+        const classIndex = HERO_CLASSES.indexOf(hero.class);
+        const rarityIndex = ["Common", "Rare", "Epic", "Legendary", "Mythic", "Genesis"].indexOf(hero.rarity);
+        const dnaHash = hero.genetics?.dna_quality || Math.floor(Math.random() * 1000000);
+        const bloodlineId = Math.floor(Math.random() * 1000000) + 1;
+        await mintHero(
+          hero.name, classIndex >= 0 ? classIndex : 0,
+          hero.generation || 1, rarityIndex >= 0 ? rarityIndex : 0,
+          dnaHash, bloodlineId, `https://api.0bomb.game/metadata/hero/${hero.id}`, true, "0"
+        );
+      } catch {}
+    } catch (e: any) {
+      setHatchError(`Free hatch failed: ${e?.message?.slice(0, 80) || "Unknown error"}`);
+    } finally {
+      setHatching(false);
+    }
+  };
+
   const resumeBattle = () => {
     const saved = loadBattle();
     if (!saved) return;
@@ -383,7 +410,6 @@ export default function GamePage() {
     }, TICK_INTERVAL);
   };
 
-  // Discard saved battle
   const discardBattle = () => {
     clearSavedBattle();
     setHasSavedBattle(false);
@@ -398,6 +424,7 @@ export default function GamePage() {
     if (useEnergyPotion(heroId)) {
       setPotions(getEnergyPotions());
       setHeroes(getHeroes().filter(h => h.owner_address === address));
+      refreshBalances();
     }
   };
 
@@ -406,33 +433,32 @@ export default function GamePage() {
     setHeroes(getHeroes().filter(h => h.owner_address === address));
   };
 
-  const handleAutoBuild = () => {
-    if (!address) return;
-    const team = autoBuildTeam(address, difficulty);
-    setSelectedIds(team);
-  };
-
-  // Build grid + enemies for a new battle (from active map or fresh)
   const buildBattleState = (heroes: Hero[], multipliers?: DropMultipliers) => {
+    const enhanced = heroes.map(h => {
+      const eff = getEffectiveStats(h);
+      return { ...h, stats: { ...h.stats, ...eff } };
+    });
     if (activeMap && !activeMap.cleared) {
-      // Continue from active map
-      const gs = createGameState(heroes, multipliers, difficulty as "Easy" | "Advanced" | "Nightmare");
-      // Restore saved grid
-      for (let y = 0; y < activeMap.grid.length && y < gs.grid.length; y++) {
-        for (let x = 0; x < activeMap.grid[y].length && x < gs.grid[y].length; x++) {
-          gs.grid[y][x] = activeMap.grid[y][x] as TileType;
-        }
-      }
-      // Restore saved enemies
-      gs.enemies = activeMap.enemies.map(e => ({ ...e, moveTimer: e.moveTimer || 0 })) as EnemySim[];
-      // Restore saved pre-placed items
-      if (activeMap.prePlacedItems) {
-        gs.prePlacedItems = activeMap.prePlacedItems.map(p => ({ ...p }));
-      }
-      return gs;
+      const dc = difficulty === "Nightmare" ? { enemyMin: 7, enemyMax: 10, enemyHpBonus: 2 } : difficulty === "Advanced" ? { enemyMin: 5, enemyMax: 8, enemyHpBonus: 1 } : { enemyMin: 3, enemyMax: 5, enemyHpBonus: 0 };
+      const heroSims = spawnHeroes(enhanced, activeMap.grid);
+      const alive = activeMap.enemies.filter(e => e.hp > 0);
+      const enemies: EnemySim[] = alive.length > 0
+        ? alive.map(e => ({ ...e, moveTimer: e.moveTimer || 0 })) as EnemySim[]
+        : generateEnemies(activeMap.grid, dc.enemyMin, dc.enemyMax, dc.enemyHpBonus);
+      return {
+        grid: activeMap.grid.map(r => [...r]),
+        heroes: heroSims,
+        enemies,
+        bombs: [],
+        loot: [],
+        prePlacedItems: activeMap.prePlacedItems?.map(p => ({ ...p })) || [],
+        tick: 0,
+        logs: [],
+        multipliers,
+        difficulty: difficulty as "Easy" | "Advanced" | "Nightmare",
+      };
     }
-    // Fresh map
-    return createGameState(heroes, multipliers, difficulty as "Easy" | "Advanced" | "Nightmare");
+    return createGameState(enhanced, multipliers, difficulty as "Easy" | "Advanced" | "Nightmare");
   };
 
   const processCollectedLoot = (g: GameState) => {
@@ -455,7 +481,6 @@ export default function GamePage() {
     if (!g) return null;
 
     const bombCountBefore = g.bombs.length;
-    // Snapshot pre-tick bomb info and grid for blast calculation
     const prevBombs: BombInfo[] = g.bombs.map(b => ({ x: b.x, y: b.y, range: b.range }));
     const gridBefore = g.grid.map(r => [...r]);
 
@@ -523,7 +548,6 @@ export default function GamePage() {
     const multi: DropMultipliers = { equipmentDropRate: eff.equipmentDropRate, currencyDropRate: eff.currencyDropRate };
     const gs = buildBattleState(selectedHeroes, multi);
 
-    // Save map if new
     if (!activeMap || activeMap.cleared) {
       const newMap = createNewActiveMap(address, difficulty, gs.grid.map(r => [...r]), gs.enemies.map(e => ({ ...e })), gs.prePlacedItems?.map(p => ({ ...p })));
       setActiveMap(newMap);
@@ -556,6 +580,10 @@ export default function GamePage() {
       const aliveHeroes = g.heroes.filter(h => h.alive);
       const aliveEnemies = g.enemies.filter(e => e.hp > 0);
 
+      if (tickCount === 1) {
+        g.logs.push(`[T1] Heroes:${aliveHeroes.length} Enemies:${aliveEnemies.length} H:${g.heroes.map(h => '('+h.x+','+h.y+')').join('')} A:${g.heroes.map(h => h.currentAction||'none').join(',')} E:${g.enemies.map(e => '('+e.x+','+e.y+')').join('')}`);
+      }
+
       if (aliveHeroes.length === 0 || aliveEnemies.length === 0 || tickCount >= maxTicks) {
         if (intervalRef.current) clearInterval(intervalRef.current);
         setIsBattling(false);
@@ -563,21 +591,21 @@ export default function GamePage() {
         const result = getGameResult(g);
         clearSavedBattle();
 
-        // Save map progression
-        const origCount = activeMap?.originalDestructibleCount ?? 0;
+        const amap = activeMapRef.current;
+        const origCount = amap?.originalDestructibleCount ?? 0;
         const progress = calculateMapProgress(g.grid, g.enemies, origCount);
         setMapProgress(progress);
         const allCleared = progress >= 100;
         if (allCleared) {
           clearActiveMap();
           setActiveMap(null);
-        } else if (activeMap) {
+        } else if (amap) {
           const updatedMap = {
-            ...activeMap,
+            ...amap,
             grid: g.grid.map(r => [...r]),
             enemies: g.enemies.map(e => ({ id: e.id, x: e.x, y: e.y, type: e.type, hp: e.hp, maxHp: e.maxHp, moveTimer: e.moveTimer })),
             progress,
-            totalKills: activeMap.totalKills + result.heroResults.reduce((s: number, r: any) => s + r.kills, 0),
+            totalKills: amap.totalKills + result.heroResults.reduce((s: number, r: any) => s + r.kills, 0),
             cleared: allCleared,
             prePlacedItems: g.prePlacedItems?.map(p => ({ ...p })) || [],
           };
@@ -620,7 +648,6 @@ export default function GamePage() {
       addXP(result.id, rewards.xp);
       addEnergyPotions(result.potionsFound);
 
-      // Per-hero token reward from kills and blocks (even without map clear)
       const eff = getEffectiveMultipliers();
       const heroTokenReward = Math.floor((result.kills * 2 + result.blocksBroken * 0.5) * eff.eventRewardMultiplier);
       if (heroTokenReward > 0 && address) {
@@ -628,7 +655,6 @@ export default function GamePage() {
         addTransaction({ type: "income", category: "reward", amount: String(heroTokenReward), description: `${result.kills} kills, ${result.blocksBroken} blocks`, ownerAddress: address });
       }
 
-      // AI evolution based on battle performance
       const battleScore = result.kills * 50 + result.blocksBroken * 10 + result.tilesExplored * 5;
       const killRatio = result.kills / Math.max(1, (battleResult.heroResults.reduce((s: number, r: any) => s + r.kills, 0)));
       evolveAIStats(result.id, battleResult.ticks, result.survived, killRatio);
@@ -644,7 +670,6 @@ export default function GamePage() {
           const eq = generateEquipment(undefined, result.id);
           addToInventory(eq);
         }
-        // Token bonus per loot collected
         if (address) {
           const lootTokenReward = Math.floor(result.lootCollected * 3 * eff.eventRewardMultiplier);
           addFragments(address, lootTokenReward);
@@ -663,7 +688,6 @@ export default function GamePage() {
       }
     }
 
-    // Map completion bonus rewards (via reward chest)
     if (address && battleResult.allCleared && rewardChest && !rewardChest.claimed) {
       const mapDiff = (activeMap?.difficulty || difficulty) as "Easy" | "Advanced" | "Nightmare";
       claimRewardChest(rewardChest, address);
@@ -679,20 +703,21 @@ export default function GamePage() {
       setHeroes(getHeroes().filter(h => h.owner_address === address));
       setPotions(getEnergyPotions());
       setFragments(getFragments(address));
+      refreshBalances();
     }
-    // Auto-redeploy next round if toggle still on
     if (autoDeployRef.current && address) {
-      const eligible = getAutoFarmEligibleHeroes(address);
-      if (eligible.length > 0) {
-        setLogs(prev => [`🔄 Auto-redeploying ${eligible.length} heroes...`, ...prev].slice(0, 200));
-        setTimeout(() => {
-          startBattle(eligible.map(h => h.id));
-        }, 300);
+      const energyCost = getEnergyCost(difficulty);
+      const team = autoBuildTeam(address, difficulty).filter(id => {
+        const h = getHero(id);
+        return h && h.energy >= energyCost;
+      });
+      if (team.length > 0) {
+        setLogs(prev => [`🔄 Auto-redeploying ${team.length} heroes...`, ...prev].slice(0, 200));
+        setTimeout(() => startBattle(team), 300);
       }
     }
   };
 
-  // Generate reward chest on map clear, reset when battle ends
   useEffect(() => {
     if (battleResult && (battleResult.allCleared || battleResult.bossKilled) && address) {
       const mapDiff = (activeMap?.difficulty || difficulty) as "Easy" | "Advanced" | "Nightmare";
@@ -720,23 +745,30 @@ export default function GamePage() {
     );
   }
 
-  const gridRows = gameState?.grid?.length || 17;
-  const gridCols = gameState?.grid[0]?.length || 21;
-  const mapW = gridCols * (CELL + PAD) + PAD;
-  const mapH = gridRows * (CELL + PAD) + PAD;
-
   const canDeploy = selectedIds.every(id => {
     const h = heroes.find(x => x.id === id);
     return h && h.energy >= getEnergyCost(difficulty);
   });
 
+  const handleToggleAutoFarm = () => {
+    const next = !autoDeploy;
+    setAutoDeploy(next);
+    autoDeployRef.current = next;
+    if (next) {
+      if (!isBattling && !battleResult && !hasSavedBattle) {
+        handleAutoBuild();
+        setHeroes(getHeroes().filter(h => h.owner_address === address));
+        setTimeout(() => autoDeployNow(), 300);
+      }
+    }
+  };
+
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-black">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800 shrink-0">
-        <h1 className="text-sm font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-          0GBomber • Auto Battle
-        </h1>
+    <div className="h-screen flex flex-col overflow-hidden bg-dark">
+      {/* ─── TOP HEADER STRIP ─── */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-gray-800 shrink-0 bg-black/40">
         <div className="flex items-center gap-2">
+          <Link href="/" className="text-[11px] font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent mr-2">0BOMB</Link>
           {activeMap && !activeMap.cleared && !isBattling && !battleResult && (
             <div className="flex items-center gap-1">
               <div className="w-20 h-1.5 bg-gray-700 rounded overflow-hidden">
@@ -745,11 +777,13 @@ export default function GamePage() {
               <span className="text-[10px] text-gray-400">{mapProgress}%</span>
               <button onClick={() => { clearActiveMap(); setActiveMap(null); setMapProgress(0); }}
                 className="text-[10px] text-red-400 hover:text-red-300 underline"
-              >Discard Map</button>
+              >Clear</button>
             </div>
           )}
+        </div>
+        <div className="flex items-center gap-2">
           <span className="text-[10px] text-gray-400">🧪 {potions}</span>
-          <span className="text-[10px] text-purple-400" title="0B Fragments">💎 {fragments}</span>
+          <span className="text-[10px] text-purple-400">💎 {fragments}</span>
           <button onClick={() => setShowSquad(!showSquad)} className="lg:hidden text-[10px] text-cyan-400 underline">Squad</button>
           {!isBattling && !battleResult && !hasSavedBattle && selectedIds.length > 0 && (
             <button onClick={() => startBattle()} disabled={!canDeploy}
@@ -758,493 +792,164 @@ export default function GamePage() {
               }`}
             >{activeMap && !activeMap.cleared ? "⚔ Continue " : "⚔ Deploy "}{getEnergyCost(difficulty)}⚡</button>
           )}
-          {!isBattling && !battleResult && !hasSavedBattle && (
-            <button onClick={handleAutoBuild}
-              className="px-2 py-1 text-[10px] font-bold rounded border border-cyan-500/30 text-cyan-400 hover:bg-cyan-600/20"
-            >Auto Team</button>
-          )}
-          <button onClick={() => {
-              const next = !autoDeploy;
-              setAutoDeploy(next);
-              autoDeployRef.current = next;
-              if (next && !isBattling && !battleResult) {
-                setHeroes(getHeroes().filter(h => h.owner_address === address));
-                setTimeout(() => autoDeployNow(), 300);
-              }
-            }}
+          <button onClick={handleToggleAutoFarm}
             className={`px-2 py-1 text-[10px] font-bold rounded border transition-all ${
               autoDeploy ? "bg-green-600/30 border-green-500 text-green-300" : "border-gray-700 text-gray-500"
             }`}
-          >{autoDeploy ? "⏹ Auto" : "▶ Auto"}</button>
+          >{autoDeploy ? "⏹ Auto Farm" : "▶ Auto Farm"}</button>
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
-        <div className={`${showSquad ? "block" : "hidden"} lg:block w-[200px] shrink-0 border-r border-gray-800 overflow-y-auto p-2`}>
-          {/* Has saved battle banner */}
-          {hasSavedBattle && (
-            <div className="mb-2 p-1.5 bg-yellow-600/20 border border-yellow-500/30 rounded">
-              <p className="text-[10px] text-yellow-300 font-bold mb-1">⚔ Battle saved!</p>
-              <div className="flex gap-1">
-                <button onClick={resumeBattle} className="flex-1 py-1 text-[11px] font-bold bg-green-600/30 text-green-300 rounded border border-green-500/30 hover:bg-green-600/50">Resume</button>
-                <button onClick={discardBattle} className="flex-1 py-1 text-[11px] font-bold bg-red-600/30 text-red-300 rounded border border-red-500/30 hover:bg-red-600/50">Discard</button>
-              </div>
-            </div>
-          )}
-
-          <div className="space-y-1">
-            <button onClick={handleHatch} disabled={hatching}
-              className={`w-full py-1 text-[11px] font-bold rounded text-white transition-all ${
-                hatching ? "bg-gray-600" : "bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500"
-              }`}
-            >{hatching ? "Hatching..." : `Hatch ${HERO_HATCH_COST}🪙`}</button>
-
-            {hatchError && <div className="px-2 py-1 bg-red-900/20 border border-red-500/30 rounded text-[10px] text-red-400">{hatchError}</div>}
-
-            <Link href="/faucet" className="block text-center text-[10px] text-cyan-400 hover:text-cyan-300 underline">💧 Get free 0BOMB</Link>
-
-            {!hasSavedBattle && selectedIds.length > 0 && (
-              <div className="p-1.5 bg-black/60 rounded border border-cyan-500/20">
-                <div className="text-[10px] text-cyan-400 font-bold mb-0.5">Squad ({selectedIds.length}/{MAX_HEROES_PER_MAP})</div>
-                {selectedIds.map(id => {
-                  const h = heroes.find(x => x.id === id);
-                  return h ? (
-                    <div key={id} className="flex items-center gap-1 text-[10px] py-0.5">
-                      {(() => {
-                        const Sprite = HERO_SPRITES[h.class];
-                        return Sprite ? <Sprite size={20} /> : null;
-                      })()}
-                      <span className="text-white truncate max-w-[70px]">{h.name}</span>
-                      <span className="text-gray-500 ml-auto">Lv.{h.level}</span>
-                    </div>
-                  ) : null;
-                })}
-              </div>
-            )}
-
-            <div className="space-y-0.5 max-h-[calc(100vh-280px)] overflow-y-auto">
-              {heroes.length === 0 ? (
-                <p className="text-gray-500 text-[9px] text-center py-4">No heroes. Hatch one!</p>
-              ) : (
-                [...heroes].sort((a, b) => b.energy - a.energy).map(hero => (
-                  <div key={hero.id} onClick={() => !hasSavedBattle && toggleSelect(hero.id)}
-                    className={`p-1 rounded border text-[10px] transition-all ${
-                      hasSavedBattle ? "opacity-40 cursor-not-allowed" :
-                      selectedIds.includes(hero.id) ? "border-cyan-500 bg-cyan-500/15 cursor-pointer" : "border-gray-700 bg-black/30 hover:border-gray-500 cursor-pointer"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        {(() => {
-                          const Sprite = HERO_SPRITES[hero.class];
-                          return Sprite ? <Sprite size={22} /> : null;
-                        })()}
-                        <span className="font-bold text-white text-[11px] truncate max-w-[70px]">{hero.name}</span>
-                      </div>
-                      <span className={`px-0.5 rounded text-[10px] font-bold ${
-                        hero.rarity === "Legendary" ? "bg-yellow-600/30 text-yellow-300" :
-                        hero.rarity === "Epic" ? "bg-purple-600/30 text-purple-300" : "bg-gray-600/30 text-gray-300"
-                      }`}>{hero.rarity}</span>
-                    </div>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <div className="flex-1 h-0.5 bg-gray-700 rounded overflow-hidden">
-                        <div className="h-full bg-yellow-500 rounded" style={{ width: `${(hero.energy / hero.max_energy) * 100}%` }} />
-                      </div>
-                      <span className="text-[10px] text-yellow-400">{hero.energy}</span>
-                      {potions > 0 && !hasSavedBattle && (
-                        <button onClick={(e) => { e.stopPropagation(); handleUsePotion(hero.id); }}
-                          className="text-[10px] px-0.5 bg-green-600/20 text-green-400 rounded"
-                        >🧪</button>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <button onClick={(e) => { e.stopPropagation(); handleToggleAutoDeploy(hero.id); }}
-                        className={`text-[8px] px-1 py-0.5 rounded border ${hero.auto_deploy ? "bg-green-600/20 border-green-500 text-green-300" : "border-gray-700 text-gray-500"}`}
-                      >{hero.auto_deploy ? "Auto ✓" : "Manual"}</button>
-                      <span className="text-[8px] text-gray-600">{getEnergyCostForDifficulty(difficulty)}⚡/run</span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {!hasSavedBattle && (
-              <div className="mt-1">
-                <label className="text-[11px] text-gray-500 block mb-0.5">Difficulty</label>
-                <div className="flex gap-0.5">
-                  {DIFFICULTIES.map(d => (
-                    <button key={d} onClick={() => setDifficulty(d)} disabled={isBattling}
-                      className={`flex-1 py-0.5 text-[11px] rounded border ${
-                        difficulty === d ? "bg-cyan-600/20 border-cyan-500 text-cyan-300" : "border-gray-700 text-gray-500"
-                      }`}
-                    >{d}</button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+      {/* ─── 3-COLUMN LAYOUT ─── */}
+      <div className="flex-1 flex min-h-0">
+        {/* LEFT PANEL — Map, Squad, Difficulty, Hatch */}
+        <div className={`${showSquad ? "block" : "hidden"} lg:block`}>
+          <LeftPanel
+            heroes={heroes}
+            selectedIds={selectedIds}
+            isBattling={isBattling}
+            gameState={gameState}
+            difficulty={difficulty}
+            hasSavedBattle={hasSavedBattle}
+            hatching={hatching}
+            hatchError={hatchError}
+            potions={potions}
+            activeMap={activeMap}
+            mapProgress={mapProgress}
+            battleResult={battleResult}
+            autoDeploy={autoDeploy}
+            onToggleSelect={toggleSelect}
+            onStartBattle={startBattle}
+            onHatch={handleHatch}
+            onFreeHatch={handleFreeHatch}
+            onUsePotion={handleUsePotion}
+            onToggleAutoDeploy={handleToggleAutoDeploy}
+            onSetDifficulty={setDifficulty}
+            onAutoBuild={handleAutoBuild}
+            onClearActiveMap={() => { clearActiveMap(); setActiveMap(null); setMapProgress(0); }}
+            onResumeBattle={resumeBattle}
+            onDiscardBattle={discardBattle}
+            energyCost={getEnergyCost(difficulty)}
+            voucherRemaining={address ? getVoucherRemaining(address, "hero") : 0}
+            voucherUsage={address ? getVoucherUsage(address, "hero") : 0}
+            voucherMax={VOUCHER_MAX_HERO}
+          />
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center bg-black overflow-hidden relative">
+        {/* CENTER — Battlefield */}
+        <div className="flex-1 flex flex-col bg-dark overflow-hidden relative panel-glow min-w-0">
+          {/* Battle HUD */}
+          {isBattling && gameState && (
+            <BattleHUD
+              elapsed={elapsed}
+              heroCount={gameState.heroes.filter(h => h.alive).length}
+              enemyCount={gameState.enemies.filter(e => e.hp > 0).length}
+              bombCount={gameState.bombs.length}
+              paused={paused}
+              musicOn={musicOn}
+              sfxOn={sfxOn}
+              onPause={handlePause}
+              onResume={handleResume}
+              onStop={handleStop}
+              onToggleMusic={() => { const v = !isMusicEnabled(); setMusicEnabled(v); setMusicOn(v); if (v && isBattlingRef.current && !pausedRef.current) startMusic(); }}
+              onToggleSfx={() => { const v = !isSfxEnabled(); setSfxEnabled(v); setSfxOn(v); }}
+            />
+          )}
+
+          {/* Battlefield / Results / Empty */}
           {isBattling && gameState ? (
             <>
-              <div className="flex items-center justify-center gap-3 text-[10px] font-mono text-gray-400 z-10 bg-black/80 px-3 py-1 rounded-t border-b border-gray-800 w-full max-w-[780px] shrink-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-cyan-400">⏱ {(elapsed / 1000).toFixed(1)}s</span>
-                  <span>H: <span className="text-green-400">{gameState.heroes.filter(h => h.alive).length}</span></span>
-                  <span>E: <span className="text-red-400">{gameState.enemies.filter(e => e.hp > 0).length}</span></span>
-                  <span>💣: <span className="text-orange-400">{gameState.bombs.length}</span></span>
-                </div>
-                <div className="w-px h-3 bg-gray-700" />
-                <div className="flex items-center gap-1">
-                  {!paused ? (
-                    <button onClick={handlePause} className="px-1.5 py-0.5 bg-yellow-600/30 text-yellow-300 rounded border border-yellow-500/30 hover:bg-yellow-600/50">⏸</button>
-                  ) : (
-                    <button onClick={handleResume} className="px-1.5 py-0.5 bg-green-600/30 text-green-300 rounded border border-green-500/30 hover:bg-green-600/50">▶</button>
-                  )}
-                  <button onClick={handleStop} className="px-1.5 py-0.5 bg-red-600/30 text-red-300 rounded border border-red-500/30 hover:bg-red-600/50">⏹</button>
-                </div>
-                <div className="w-px h-3 bg-gray-700" />
-                <div className="flex items-center gap-2 text-[9px]">
-                  <span className="text-gray-500 font-bold">Legend:</span>
-                  <span className="flex items-center gap-0.5">
-                    <svg width="10" height="10" viewBox="0 0 18 18">{renderHero(9, 9, "Marine")}</svg><span className="text-cyan-400">Hero</span>
-                  </span>
-                  <span className="flex items-center gap-0.5">
-                    <svg width="10" height="10" viewBox="0 0 18 18">{renderEnemy(9, 9, "Crawler")}</svg><span className="text-red-400">Enemy</span>
-                  </span>
-                  <span className="flex items-center gap-0.5">
-                    <svg width="10" height="10" viewBox="0 0 18 18">{renderBomb(9, 9)}</svg><span className="text-orange-400">Bomb</span>
-                  </span>
-                  <span className="flex items-center gap-0.5">
-                    <svg width="10" height="10" viewBox="0 0 18 18">{renderLoot(9, 9, "power")}</svg><span className="text-yellow-400">Loot</span>
-                  </span>
-                </div>
-                <div className="w-px h-3 bg-gray-700" />
-                <div className="flex items-center gap-1">
-                  <button onClick={() => { const v = !isMusicEnabled(); setMusicEnabled(v); setMusicOn(v); if (v && isBattlingRef.current && !pausedRef.current) startMusic(); }}
-                    className={`px-1 py-0.5 rounded border ${musicOn ? "border-cyan-500/50 text-cyan-400" : "border-gray-700 text-gray-500"}`}
-                  >🎵{musicOn ? "On" : "Off"}</button>
-                  <button onClick={() => { const v = !isSfxEnabled(); setSfxEnabled(v); setSfxOn(v); }}
-                    className={`px-1 py-0.5 rounded border ${sfxOn ? "border-cyan-500/50 text-cyan-400" : "border-gray-700 text-gray-500"}`}
-                  >🔊{sfxOn ? "On" : "Off"}</button>
-                </div>
+              <div className="flex-1 flex items-center justify-center w-full overflow-hidden p-2">
+                <GameMap gameState={gameState} explosions={explosions} />
               </div>
               {paused && (
-                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60">
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 backdrop-blur-sm">
                   <div className="text-center">
-                    <div className="text-4xl mb-2">⏸</div>
-                    <p className="text-sm text-yellow-300 font-bold mb-3">Battle Paused</p>
-                    <button onClick={handleResume} className="px-3 py-1.5 text-xs font-bold bg-green-600/30 text-green-300 rounded border border-green-500/30 hover:bg-green-600/50">▶ Resume</button>
+                    <div className="text-5xl mb-3">⏸</div>
+                    <p className="text-sm text-yellow-300 font-bold mb-4">Battle Paused</p>
+                    <button onClick={handleResume}
+                      className="px-4 py-2 text-[11px] font-bold rounded bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white"
+                    >▶ Resume</button>
                   </div>
                 </div>
               )}
-              <div className="flex-1 flex items-center justify-center w-full overflow-hidden p-2">
-                <svg width={mapW} height={mapH} viewBox={`0 0 ${mapW} ${mapH}`} style={{ maxWidth: "100%", maxHeight: "100%" }}>
-                  {renderMap(gameState, explosions)}
-                </svg>
-              </div>
             </>
           ) : battleResult ? (
-            <div className="bg-gray-900/80 rounded-lg p-4 max-w-md mx-auto">
-              <div className="text-center mb-2">
-                <div className="text-3xl mb-1">{battleResult.bossKilled ? "🔥" : battleResult.allCleared ? "✨" : "💀"}</div>
-                <h2 className="text-base font-bold text-cyan-400">{battleResult.bossKilled ? "Boss Slain!" : battleResult.allCleared ? "Victory!" : "Mission Complete"}</h2>
-                <p className="text-[10px] text-gray-500">{(elapsed / 1000).toFixed(1)}s • {battleResult.ticks} ticks</p>
-              </div>
-              <div className="grid grid-cols-4 gap-1 mb-2">
-                <div className="bg-black/30 rounded p-1.5 text-center">
-                  <div className="text-sm font-bold text-cyan-400">{battleResult.heroResults.reduce((s: number, r: any) => s + r.kills, 0)}</div>
-                  <div className="text-[11px] text-gray-500">Kills</div>
-                </div>
-                <div className="bg-black/30 rounded p-1.5 text-center">
-                  <div className="text-sm font-bold text-yellow-400">{battleResult.totalScore}</div>
-                  <div className="text-[11px] text-gray-500">Score</div>
-                </div>
-                <div className="bg-black/30 rounded p-1.5 text-center">
-                  <div className="text-sm font-bold text-green-400">{battleResult.heroResults.filter((r: any) => r.survived).length}/{battleResult.heroResults.length}</div>
-                  <div className="text-[11px] text-gray-500">Alive</div>
-                </div>
-                <div className="bg-black/30 rounded p-1.5 text-center">
-                  <div className="text-sm font-bold text-purple-400">{battleResult.heroResults.reduce((s: number, r: any) => s + r.potionsFound, 0)}</div>
-                  <div className="text-[11px] text-gray-500">🧪</div>
-                </div>
-              </div>
-              <div className="space-y-0.5 mb-2">
-                {battleResult.heroResults.map((r: any) => (
-                  <div key={r.id} className={`flex items-center justify-between p-1 rounded text-[10px] border ${r.survived ? "bg-black/30 border-gray-800" : "bg-red-900/20 border-red-800/30"}`}>
-                    <span className={r.survived ? "text-white" : "text-red-400"}>{heroes.find(h => h.id === r.id)?.name || r.id}</span>
-                    <span className="text-gray-400">K:{r.kills} 🧪:{r.potionsFound}</span>
-                  </div>
-                ))}
-              </div>
-              {rewardChest && !rewardChest.claimed && (
-                <div className="mb-2 p-2 bg-yellow-600/10 border border-yellow-500/30 rounded">
-                  <div className="text-[10px] font-bold text-yellow-400 mb-1">🎁 Reward Chest</div>
-                  <div className="text-[9px] text-gray-400">
-                    {rewardChest.items.map((item, i) => (
-                      <div key={i}>• {item.quantity}x {item.type}{item.name ? ` (${item.name})` : ""}</div>
-                    ))}
-                    <div>Clear time bonus: +{Math.round(rewardChest.clearTimeBonus * 100)}%</div>
-                  </div>
-                </div>
-              )}
-              <button onClick={handleClaimRewards}
-                className="w-full py-1.5 text-[10px] font-bold bg-gradient-to-r from-yellow-600 to-orange-600 rounded hover:from-yellow-500 hover:to-orange-500 text-white"
-              >{rewardChest && !rewardChest.claimed ? `🎁 Claim ${rewardChest.fragments}💎 + ${battleResult.heroResults.reduce((s: number, r: any) => s + r.potionsFound, 0)}🧪` : `Claim ${battleResult.heroResults.reduce((s: number, r: any) => s + r.potionsFound, 0)}🧪 + XP`}</button>
-            </div>
+            <BattleResultPanel
+              battleResult={battleResult}
+              elapsed={elapsed}
+              heroes={heroes}
+              rewardChest={rewardChest}
+              onClaimRewards={handleClaimRewards}
+            />
           ) : hasSavedBattle ? (
-            <div className="text-center text-gray-500">
-              <div className="text-4xl mb-2">💾</div>
-              <p className="text-sm mb-1">Battle saved from earlier</p>
-              <p className="text-[10px] text-gray-600">Resume or discard from the squad panel</p>
-            </div>
+            <EmptyBattleState
+              energyCost={getEnergyCost(difficulty)}
+              selectedCount={selectedIds.length}
+              maxHeroes={MAX_HEROES_PER_MAP}
+              canDeploy={canDeploy}
+              hasSavedBattle={true}
+              gameState={gameState}
+              onStartBattle={() => startBattle()}
+              onResumeBattle={resumeBattle}
+              onDiscardBattle={discardBattle}
+            />
           ) : (
-            <div className="text-center text-gray-500">
-              <div className="text-3xl mb-2">⚔️</div>
-              <p className="text-xs mb-1">Select heroes and deploy</p>
-              <p className="text-[10px] text-gray-600">{getEnergyCost(difficulty)}⚡/hero • 30% 🧪 per kill</p>
-              {selectedIds.length > 0 && (
-            <button onClick={() => startBattle()} disabled={!canDeploy}
-                  className={`mt-2 px-4 py-1 text-xs font-bold rounded ${
-                    canDeploy ? "bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white" : "bg-gray-700 text-gray-400 cursor-not-allowed"
-                  }`}
-                >⚔ Deploy {getEnergyCost(difficulty)}⚡</button>
-              )}
-            </div>
+            <EmptyBattleState
+              energyCost={getEnergyCost(difficulty)}
+              selectedCount={selectedIds.length}
+              maxHeroes={MAX_HEROES_PER_MAP}
+              canDeploy={canDeploy}
+              hasSavedBattle={false}
+              gameState={gameState}
+              onStartBattle={() => startBattle()}
+              onResumeBattle={resumeBattle}
+              onDiscardBattle={discardBattle}
+            />
           )}
         </div>
 
-        <div className="w-[260px] shrink-0 border-l border-gray-800 flex flex-col">
-          <div className="h-[160px] shrink-0 overflow-y-auto border-b border-gray-800">
-            <div className="text-[10px] font-bold text-yellow-400 px-2 py-1 border-b border-gray-800">🎒 Loot</div>
-            <div className="px-2 py-1 space-y-0.5">
-              {!gameState ? (
-                <p className="text-[11px] text-gray-600 text-center pt-2">Deploy to get loot</p>
-              ) : (
-                <>
-                  {gameState.heroes.filter(h => h.potionsFound > 0).length === 0 && gameState.loot.length === 0 ? (
-                    <p className="text-[11px] text-gray-600 text-center pt-2">No items yet</p>
-                  ) : (
-                    <>
-                      {gameState.heroes.filter(h => h.potionsFound > 0).map(h => (
-                        <div key={h.id} className="flex items-center justify-between text-[10px] text-gray-300">
-                          <span className="truncate max-w-[100px]">{h.name}</span>
-                          <span className="text-green-400">🧪×{h.potionsFound}</span>
-                        </div>
-                      ))}
-                      {gameState.loot.length > 0 && (
-                        <div className="text-[11px] text-gray-500 border-t border-gray-800 pt-0.5 mt-0.5">
-                          {gameState.loot.length} item{gameState.loot.length > 1 ? "s" : ""} on map
-                        </div>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          {gameState && isBattling && (
-            <div className="h-[300px] shrink-0 border-b border-gray-800">
-              <div className="text-[10px] font-bold text-cyan-400 px-2 py-1 border-b border-gray-800">⚔ Hero Status</div>
-              <div className="px-2 py-1 space-y-0.5 h-[calc(100%-24px)] overflow-y-auto">
-                {gameState.heroes.filter(h => h.alive).length === 0 ? (
-                  <p className="text-[11px] text-red-400 text-center pt-1">All heroes defeated</p>
-                ) : (
-                  gameState.heroes.map(h => {
-                    const hpPct = Math.max(0, h.hp / Math.max(1, h.maxHp));
-                    return (
-                      <div key={h.id} className={`rounded border text-[9px] ${h.alive ? "border-gray-700 bg-black/30" : "border-red-900/30 bg-red-900/10"}`}>
-                        <div className="flex items-center justify-between px-1.5 py-0.5">
-                          <div className="flex items-center gap-1">
-                            {(() => {
-                              const Sprite = HERO_SPRITES[h.class];
-                              return Sprite ? <Sprite size={18} /> : null;
-                            })()}
-                            <span className="text-white font-bold text-[10px] truncate max-w-[50px]">{h.name}</span>
-                            <span className="text-gray-500 text-[8px]">{h.class}</span>
-                          </div>
-                          <span className={h.alive ? "text-green-400" : "text-red-400"}>{h.alive ? `♥${h.hp}/${h.maxHp}` : "💀"}</span>
-                        </div>
-                        <div className="px-1.5 pb-0.5">
-                          <div className="h-1 bg-gray-700 rounded overflow-hidden mb-0.5">
-                            <div className={`h-full rounded ${hpPct > 0.5 ? "bg-green-500" : hpPct > 0.25 ? "bg-yellow-500" : "bg-red-500"}`} style={{ width: `${hpPct * 100}%` }} />
-                          </div>
-                          <div className="flex items-center gap-2 text-[8px] text-gray-500">
-                            <span className={h.alive ? "text-red-400" : ""}>P:{h.power}</span>
-                            <span className="text-blue-400">D:{h.defense}</span>
-                            <span className="text-green-400">S:{h.speed}</span>
-                            <span className="text-purple-400">I:{h.intelligence}</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-[8px] text-gray-500">
-                            <span>💀{h.kills}</span>
-                            <span>🧱{h.blocksBroken}</span>
-                            <span>🎒{h.lootCollected}</span>
-                            <span>⚔{h.damageDealt}</span>
-                          </div>
-                          <div className="flex items-center gap-2 text-[7px] text-gray-600">
-                            <span>Bra:{h.brave}</span>
-                            <span>Grd:{h.greedy}</span>
-                            <span>Cu:{h.curious}</span>
-                            <span>Agg:{h.aggression}</span>
-                            <span>Risk:{h.risk_awareness}</span>
-                          </div>
-                          <div className="flex items-center gap-1 text-[7px]">
-                            <div className="flex-1 h-0.5 bg-gray-700 rounded overflow-hidden max-w-[40px]">
-                              <div className="h-full bg-yellow-500 rounded" style={{ width: `${(h.energy / h.max_energy) * 100}%` }} />
-                            </div>
-                            <span className="text-yellow-400">{h.energy}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="flex-1 overflow-hidden flex flex-col">
-            <div className="text-[10px] font-bold text-gray-400 px-2 py-1 border-b border-gray-800 shrink-0">⚡ Feed <span className="text-gray-600 font-normal">({logs.length})</span></div>
-            <div ref={feedRef} className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
-              {logs.length === 0 ? (
-                <p className="text-[11px] text-gray-600 text-center pt-4">Waiting for battle...</p>
-              ) : (
-                logs.slice(0, 40).map((msg, i) => (
-                  <div key={i} className="text-[10px] text-gray-500 font-mono leading-snug">
-                    {msg.length > 60 ? msg.slice(0, 60) + "..." : msg}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+        {/* RIGHT PANEL — Loot, Hero Status, Feed */}
+        <div className={`${showSquad ? "block" : "hidden"} lg:block`}>
+          <RightPanel
+            isBattling={isBattling}
+            gameState={gameState}
+            logs={logs}
+            heroes={heroes}
+            battleResult={battleResult}
+            hasSavedBattle={hasSavedBattle}
+            selectedIds={selectedIds}
+            energyCost={getEnergyCost(difficulty)}
+            canDeploy={canDeploy}
+            onStartBattle={startBattle}
+            onResumeBattle={resumeBattle}
+            onDiscardBattle={discardBattle}
+          />
         </div>
       </div>
+
+      {/* ─── BOTTOM PANEL (during battle) ─── */}
+      <BottomPanel
+        gameState={gameState}
+        isBattling={isBattling}
+        paused={paused}
+        onPause={handlePause}
+        onResume={handleResume}
+        onStop={handleStop}
+        onToggleAutoDeploy={handleToggleAutoDeploy}
+        heroes={heroes}
+        selectedIds={selectedIds}
+        onToggleSelect={toggleSelect}
+      />
+
+      {/* ─── BOTTOM STATUS BAR ─── */}
+      <BottomStatusBar
+        isConnected={isConnected}
+        isBattling={isBattling}
+        elapsed={elapsed}
+        autoFarmStatus={autoDeploy ? "Farming" : "Idle"}
+        chain="0Bomb"
+      />
     </div>
   );
 }
-
-function renderMap(gs: GameState, explosions: Explosion[]) {
-  const elements: React.ReactNode[] = [];
-  const cw = CELL;
-  const ch = CELL;
-
-  for (let y = 0; y < gs.grid.length; y++) {
-    for (let x = 0; x < gs.grid[y].length; x++) {
-      const tile = gs.grid[y][x];
-      const px = x * (cw + PAD) + PAD;
-      const py = y * (ch + PAD) + PAD;
-
-      if (tile === 1) {
-        elements.push(<g key={`wall-${x}-${y}`}>{renderSolidWall(px, py, cw, ch)}</g>);
-      } else if (tile === 2) {
-        elements.push(<g key={`dest-${x}-${y}`}>{renderDestructible(px, py, cw, ch)}</g>);
-      } else if (tile === 3) {
-        elements.push(<g key={`lava-${x}-${y}`}>{renderLava(px, py, cw, ch)}</g>);
-      } else if (tile === 4) {
-        elements.push(<g key={`cry-${x}-${y}`}>{renderCrystal(px, py, cw, ch)}</g>);
-      } else {
-        elements.push(
-          <rect key={`floor-${x}-${y}`} x={px} y={py} width={cw} height={ch} fill="#0f0f23" stroke="#1a1a30" strokeWidth={0.5} rx={1} />
-        );
-      }
-    }
-  }
-
-  for (const loot of gs.loot) {
-    const px = loot.x * (cw + PAD) + PAD + cw / 2;
-    const py = loot.y * (ch + PAD) + PAD + ch / 2;
-    elements.push(<g key={`loot-${loot.x}-${loot.y}`}>{renderLoot(px, py, loot.type)}</g>);
-  }
-
-  for (const item of gs.prePlacedItems || []) {
-    const px = item.x * (cw + PAD) + PAD + cw / 2;
-    const py = item.y * (ch + PAD) + PAD + ch / 2;
-    elements.push(
-      <g key={`pre-${item.x}-${item.y}`}>
-        <circle cx={px} cy={py} r={3} fill="#ffd700" opacity={0.8} />
-        <circle cx={px} cy={py} r={1.5} fill="#fff" opacity={0.6} />
-      </g>
-    );
-  }
-
-  for (const bomb of gs.bombs) {
-    const px = bomb.x * (cw + PAD) + PAD + cw / 2;
-    const py = bomb.y * (ch + PAD) + PAD + ch / 2;
-    elements.push(<g key={`bomb-${bomb.x}-${bomb.y}`}>{renderBomb(px, py)}</g>);
-  }
-
-  for (const exp of explosions) {
-    const px = exp.x * (cw + PAD) + PAD + cw / 2;
-    const py = exp.y * (ch + PAD) + PAD + ch / 2;
-    elements.push(<g key={exp.id}>{renderExplosion(px, py)}</g>);
-  }
-
-  for (const enemy of gs.enemies) {
-    if (enemy.hp <= 0) continue;
-    const px = enemy.x * (cw + PAD) + PAD + cw / 2;
-    const py = enemy.y * (ch + PAD) + PAD + ch / 2;
-    const isBoss = ["Lava Titan", "Hive Queen", "Ancient Guardian", "Void Dragon"].includes(enemy.type);
-
-    elements.push(
-      <g key={`enemy-sprite-${enemy.id}`}>
-        {isBoss ? renderBoss(px, py, enemy.type) : renderEnemy(px, py, enemy.type)}
-      </g>
-    );
-
-    const hpPct = enemy.hp / enemy.maxHp;
-    const bossSize = 10;
-    const hpBarY = isBoss ? py - bossSize - 4 : py - 8;
-    elements.push(
-      <rect key={`ehpbg-${enemy.id}`} x={px - 6} y={hpBarY} width={12} height={2} fill="#333" rx={1} />,
-      <rect key={`ehp-${enemy.id}`} x={px - 6} y={hpBarY} width={12 * hpPct} height={2} fill={hpPct > 0.5 ? "#44ff44" : "#ff4444"} rx={1} />
-    );
-  }
-
-  for (const hero of gs.heroes) {
-    if (!hero.alive) continue;
-    const px = hero.x * (cw + PAD) + PAD + cw / 2;
-    const py = hero.y * (ch + PAD) + PAD + ch / 2;
-    const hSim = hero as any;
-
-    if (hSim.cosmetics?.Aura) {
-      elements.push(
-        <circle key={`aura-${hero.id}`} cx={px} cy={py} r={12} fill="none" stroke="#a855f7" strokeWidth={1} opacity={0.5}>
-          <animate attributeName="r" values="12;14;12" dur="1.5s" repeatCount="indefinite" />
-          <animate attributeName="opacity" values="0.5;0.2;0.5" dur="1.5s" repeatCount="indefinite" />
-        </circle>
-      );
-    }
-    elements.push(<g key={`hero-sprite-${hero.id}`}>{renderHero(px, py, hero.class)}</g>);
-    if (hSim.cosmetics?.Trail) {
-      elements.push(
-        <circle key={`trail-${hero.id}`} cx={px - 6} cy={py + 4} r={3} fill="#22d3ee" opacity={0.4}>
-          <animate attributeName="opacity" values="0.4;0;0.4" dur="0.6s" repeatCount="indefinite" />
-        </circle>,
-        <circle key={`trail2-${hero.id}`} cx={px - 4} cy={py - 5} r={2} fill="#22d3ee" opacity={0.3}>
-          <animate attributeName="opacity" values="0.3;0;0.3" dur="0.8s" repeatCount="indefinite" />
-        </circle>
-      );
-    }
-    if (hSim.cosmetics?.Helmet) {
-      elements.push(
-        <rect key={`helm-${hero.id}`} x={px - 4} y={py - 11} width={8} height={4} fill="#f59e0b" rx={1} opacity={0.6} />
-      );
-    }
-    const hpPct = hero.hp / 5;
-    elements.push(
-      <rect key={`hphpbg-${hero.id}`} x={px - 6} y={py - 11} width={12} height={2} fill="#333" rx={1} />,
-      <rect key={`hphp-${hero.id}`} x={px - 6} y={py - 11} width={12 * hpPct} height={2} fill="#44ff44" rx={1} />
-    );
-    elements.push(
-      <text key={`name-${hero.id}`} x={px} y={py - 13} fill="#22d3ee" fontSize="5" textAnchor="middle" fontFamily="monospace" fontWeight="bold">
-        {hero.name.length > 6 ? hero.name.slice(0, 6) : hero.name}
-      </text>
-    );
-  }
-
-  return elements;
-}
-
-
