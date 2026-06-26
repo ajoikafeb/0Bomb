@@ -8,11 +8,16 @@ import { generateCosmetic } from "@/lib/game/cosmeticSystem";
 import { generateHero } from "@/lib/game/heroGenerator";
 import { countDestructibleTiles } from "@/lib/game/AIDecisionEngine";
 import { fetchActiveListings as fetchRemoteListings, createListingRemote, updateListingStatus as updateListingRemote } from "@/lib/supabase/marketplace";
+import { syncHeroes, syncInventory, syncCosmetics, syncAdminConfig, syncMarketplaceListings, syncProfile, deleteHeroRemote, deleteInventoryRemote, deleteCosmeticRemote, enableSync, isSyncEnabled } from "@/lib/supabase/sync";
 
 const STORAGE_KEY = "0gbomber_state";
 
 let _remoteListings: MarketplaceListing[] = [];
 let _syncStarted = false;
+
+if (typeof window !== "undefined") {
+  enableSync();
+}
 
 export function initMarketplaceSync() {
   if (_syncStarted) return;
@@ -231,6 +236,16 @@ function loadSave(): GameSave {
 function saveState(save: GameSave) {
   if (typeof window === "undefined") return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(save));
+  if (isSyncEnabled()) {
+    syncHeroes(save.heroes);
+    syncInventory(save.inventory);
+    syncCosmetics(save.cosmetics);
+    syncMarketplaceListings(save.listings);
+    syncAdminConfig(save.adminConfig);
+    for (const [addr, bal] of Object.entries(save.tokenBalances || {})) {
+      syncProfile(addr, bal);
+    }
+  }
 }
 
 export function getHeroes(): Hero[] {
@@ -1450,6 +1465,7 @@ export function adminDeleteHero(id: string) {
   save.heroes = save.heroes.filter(h => h.id !== id);
   addAuditLog("delete_hero", id, hero ? `Deleted ${hero.name} Lv.${hero.level}` : "Hero deleted");
   saveState(save);
+  if (isSyncEnabled()) deleteHeroRemote(id);
 }
 
 export function adminGiveXP(heroId: string, amount: number) {

@@ -81,5 +81,30 @@ CREATE TABLE marketplace_listings (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE inventory (
+  id TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'Equipment',
+  rarity TEXT NOT NULL DEFAULT 'Common',
+  slot TEXT DEFAULT 'weapon',
+  stats JSONB DEFAULT '{}',
+  equipped BOOLEAN DEFAULT FALSE,
+  soulbound BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE cosmetics (
+  id TEXT PRIMARY KEY,
+  owner TEXT NOT NULL,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL DEFAULT 'skin',
+  rarity TEXT NOT NULL DEFAULT 'Common',
+  preview TEXT DEFAULT '',
+  equipped BOOLEAN DEFAULT FALSE,
+  soulbound BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Insert default admin config
 INSERT INTO admin_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
